@@ -36,7 +36,7 @@ ros2 launch cakebot_description gazebo.launch.py
 |---|---:|---|
 | `gui` | `true` | 是否启动 Gazebo 图形界面 |
 | `paused` | `false` | 是否暂停启动仿真 |
-| `use_sim_time` | `true` | 是否使用 Gazebo 仿真时间 |
+| `use_sim_time` | `true` | 节点是否使用 Gazebo 仿真时间 |
 | `use_rviz` | `true` | 是否同时启动 RViz |
 | `world` | `cakebot.world` | Gazebo 世界文件 |
 | `x` | `0.0` | 机器人初始 x 坐标 |
@@ -95,6 +95,95 @@ ros2 launch cakebot_description display.launch.py
 - 坐标系：`laser_link`；
 - 固定 TF：`base_link -> laser_link`。
 
+## 1.2.9 基础运动测试节点
+
+`cakebot_demo_cpp` 提供 `basic_motion_test` 测试节点，用于验证以下接口：
+
+- 发布 `/cmd_vel`，控制机器人前进、停止和原地旋转；
+- 订阅 `/odom`，确认里程计数据正常；
+- 订阅 `/scan`，确认激光雷达数据正常；
+- 前方障碍物进入安全距离，或 `/scan` 超时后，立即停止机器人。
+
+默认测试流程为：等待传感器 → 等待 2 秒 → 低速前进 3 秒 → 停止 1 秒 → 原地旋转 2 秒 → 停止。
+
+### 编译
+
+在 ROS 2 工作空间根目录执行：
+
+```bash
+source /opt/ros/humble/setup.bash
+colcon build --packages-select cakebot_description cakebot_demo_cpp --symlink-install
+source install/setup.bash
+```
+
+### 运行
+
+先启动 Gazebo 仿真：
+
+```bash
+ros2 launch cakebot_description gazebo.launch.py
+```
+
+再打开另一个终端，加载工作空间环境并运行测试节点：
+
+```bash
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+ros2 run cakebot_demo_cpp basic_motion_test
+```
+
+机器人前方应保持空旷。节点会先等待 `/odom` 和 `/scan`，测试期间可以在 Gazebo 中观察机器人运动。
+
+### 验证接口
+
+可在另一个终端检查话题：
+
+```bash
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+ros2 topic echo /odom --once
+ros2 topic echo /scan --once
+ros2 topic echo /cmd_vel
+```
+
+也可以检查 TF：
+
+```bash
+ros2 run tf2_ros tf2_echo odom base_link
+```
+
+### 可调参数
+
+例如将前进速度改为 `0.05 m/s`，并将安全距离改为 `0.50 m`：
+
+```bash
+ros2 run cakebot_demo_cpp basic_motion_test --ros-args \
+  -p forward_speed:=0.05 \
+  -p safety_distance:=0.50
+```
+
+可用参数包括：
+
+| 参数 | 默认值 | 说明 |
+|---|---:|---|
+| `forward_speed` | `0.10` | 前进速度，单位 m/s |
+| `angular_speed` | `0.30` | 旋转速度，单位 rad/s |
+| `forward_duration` | `3.0` | 前进时间，单位 s |
+| `rotate_duration` | `2.0` | 旋转时间，单位 s |
+| `stop_duration` | `1.0` | 前进后的停止时间，单位 s |
+| `start_delay` | `2.0` | 传感器就绪后的启动等待时间，单位 s |
+| `safety_distance` | `0.45` | 前方障碍物安全距离，单位 m |
+| `sensor_timeout` | `0.5` | `/scan` 超时时间，单位 s |
+
+### 预期验收结果
+
+- 编译成功；
+- 节点能收到 `/odom` 和 `/scan`；
+- 机器人能按流程前进、停止和旋转；
+- `/odom` 数据在运动时发生变化；
+- 遇到近距离障碍物或激光数据超时后，机器人自动停止；
+- 测试结束后终端输出 `Basic motion test PASSED`，机器人保持静止。
+
 ## 验收与排查命令
 
 验证 Xacro 和 URDF：
@@ -141,6 +230,5 @@ RViz 中应设置：
 - `install/`；
 - `log/`；
 - `symlink_install_manifest.txt`。
-
 
 ### 注：目前雷达没有噪声

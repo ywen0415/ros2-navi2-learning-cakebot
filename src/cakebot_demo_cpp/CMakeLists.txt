@@ -7,7 +7,28 @@ endif()
 
 # find dependencies
 find_package(ament_cmake REQUIRED)
+find_package(geometry_msgs REQUIRED)
+find_package(nav_msgs REQUIRED)
 find_package(rclcpp REQUIRED)
+find_package(sensor_msgs REQUIRED)
+
+add_executable(basic_motion_test
+  src/basic_motion_test.cpp
+)
+
+target_compile_features(basic_motion_test PRIVATE cxx_std_17)
+
+ament_target_dependencies(basic_motion_test
+  geometry_msgs
+  nav_msgs
+  rclcpp
+  sensor_msgs
+)
+
+install(TARGETS
+  basic_motion_test
+  DESTINATION lib/${PROJECT_NAME}
+)
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
