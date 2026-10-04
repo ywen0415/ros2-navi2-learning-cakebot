@@ -232,3 +232,7 @@ RViz 中应设置：
 - `symlink_install_manifest.txt`。
 
 ### 注：目前雷达没有噪声；目前是二维雷达，后面肯定要改！
+
+要使用测试地图就得指定这个地图
+ros2 launch cakebot_description gazebo.launch.py \
+  world:=/home/wen/cakebot/src/cakebot_description/worlds/test_env.world
