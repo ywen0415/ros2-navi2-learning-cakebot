@@ -1,0 +1,232 @@
+<?xml version="1.0"?>
+<!--
+  cakebot 基础机器人模型
+
+  坐标约定：
+    x：机器人前方为正，后方为负
+    y：机器人左方为正，右方为负
+    z：向上为正
+
+  本文件刻意把几何尺寸和组件位置集中在顶部，方便在实物尺寸尚未
+  完全确定时调整。当前模型用于 RViz 显示，暂不包含 Gazebo 插件。
+-->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="cakebot">
+
+  <!-- ================================================================
+       可配置参数
+       ================================================================ -->
+
+  <!-- 底盘尺寸 -->
+  <xacro:arg name="base_length" default="0.32"/>
+  <xacro:arg name="base_width" default="0.24"/>
+  <xacro:arg name="base_height" default="0.10"/>
+  <xacro:arg name="base_z" default="0.085"/>
+  <xacro:arg name="base_mass" default="2.0"/>
+
+  <!-- 驱动轮尺寸与位置 -->
+  <xacro:arg name="wheel_radius" default="0.05"/>
+  <xacro:arg name="wheel_width" default="0.025"/>
+  <xacro:arg name="wheel_separation" default="0.22"/>
+  <xacro:arg name="wheel_x" default="0.0"/>
+  <xacro:arg name="wheel_z" default="0.05"/>
+  <xacro:arg name="wheel_mass" default="0.15"/>
+
+  <!--
+    万向轮位置：
+      caster_x > 0：前方
+      caster_x < 0：后方
+    例如：把 default="-0.12" 改成 default="0.12"，即可把万向轮
+    从后方移动到前方。
+  -->
+  <xacro:arg name="caster_radius" default="0.025"/>
+  <xacro:arg name="caster_x" default="-0.12"/>
+  <xacro:arg name="caster_y" default="0.0"/>
+  <xacro:arg name="caster_z" default="0.025"/>
+  <xacro:arg name="caster_yaw" default="0.0"/>
+  <xacro:arg name="caster_mass" default="0.08"/>
+
+  <!--
+    将可由命令行覆盖的 xacro:arg 映射为内部属性。
+    之后只使用这些属性，避免把外部参数和模型计算混在一起。
+  -->
+  <xacro:property name="base_length" value="$(arg base_length)"/>
+  <xacro:property name="base_width" value="$(arg base_width)"/>
+  <xacro:property name="base_height" value="$(arg base_height)"/>
+  <xacro:property name="base_z" value="$(arg base_z)"/>
+  <xacro:property name="base_mass" value="$(arg base_mass)"/>
+
+  <xacro:property name="wheel_radius" value="$(arg wheel_radius)"/>
+  <xacro:property name="wheel_width" value="$(arg wheel_width)"/>
+  <xacro:property name="wheel_separation" value="$(arg wheel_separation)"/>
+  <xacro:property name="wheel_x" value="$(arg wheel_x)"/>
+  <xacro:property name="wheel_z" value="$(arg wheel_z)"/>
+  <xacro:property name="wheel_mass" value="$(arg wheel_mass)"/>
+
+  <xacro:property name="caster_radius" value="$(arg caster_radius)"/>
+  <xacro:property name="caster_x" value="$(arg caster_x)"/>
+  <xacro:property name="caster_y" value="$(arg caster_y)"/>
+  <xacro:property name="caster_z" value="$(arg caster_z)"/>
+  <xacro:property name="caster_yaw" value="$(arg caster_yaw)"/>
+  <xacro:property name="caster_mass" value="$(arg caster_mass)"/>
+
+  <!-- ================================================================
+       可复用宏
+       ================================================================ -->
+
+  <!-- 长方体惯性，x/y/z 为长方体三个方向的尺寸 -->
+  <xacro:macro name="box_inertial" params="mass x y z origin_z">
+    <inertial>
+      <origin xyz="0 0 ${origin_z}" rpy="0 0 0"/>
+      <mass value="${mass}"/>
+      <inertia
+        ixx="${mass * (y * y + z * z) / 12.0}"
+        ixy="0.0"
+        ixz="0.0"
+        iyy="${mass * (x * x + z * z) / 12.0}"
+        iyz="0.0"
+        izz="${mass * (x * x + y * y) / 12.0}"/>
+    </inertial>
+  </xacro:macro>
+
+  <!-- 圆柱惯性：宏内部默认圆柱轴线为 z 轴 -->
+  <xacro:macro name="cylinder_inertial" params="mass radius length">
+    <inertial>
+      <mass value="${mass}"/>
+      <inertia
+        ixx="${mass * (3.0 * radius * radius + length * length) / 12.0}"
+        ixy="0.0"
+        ixz="0.0"
+        iyy="${mass * (3.0 * radius * radius + length * length) / 12.0}"
+        iyz="0.0"
+        izz="${mass * radius * radius / 2.0}"/>
+    </inertial>
+  </xacro:macro>
+
+  <!-- 差速驱动轮。y 为轮轴中心相对于 base_link 的横向位置。 -->
+  <xacro:macro name="drive_wheel" params="side y">
+    <link name="${side}_wheel_link">
+      <visual>
+        <origin xyz="0 0 0" rpy="${pi / 2.0} 0 0"/>
+        <geometry>
+          <cylinder radius="${wheel_radius}" length="${wheel_width}"/>
+        </geometry>
+        <material name="wheel_black"/>
+      </visual>
+
+      <collision>
+        <origin xyz="0 0 0" rpy="${pi / 2.0} 0 0"/>
+        <geometry>
+          <cylinder radius="${wheel_radius}" length="${wheel_width}"/>
+        </geometry>
+      </collision>
+
+      <!-- 惯性坐标系随圆柱一起绕 x 轴旋转，使圆柱轴线为 y 轴。 -->
+      <inertial>
+        <origin xyz="0 0 0" rpy="${pi / 2.0} 0 0"/>
+        <mass value="${wheel_mass}"/>
+        <inertia
+          ixx="${wheel_mass * (3.0 * wheel_radius * wheel_radius + wheel_width * wheel_width) / 12.0}"
+          ixy="0.0"
+          ixz="0.0"
+          iyy="${wheel_mass * wheel_radius * wheel_radius / 2.0}"
+          iyz="0.0"
+          izz="${wheel_mass * (3.0 * wheel_radius * wheel_radius + wheel_width * wheel_width) / 12.0}"/>
+      </inertial>
+    </link>
+
+    <joint name="${side}_wheel_joint" type="continuous">
+      <parent link="base_link"/>
+      <child link="${side}_wheel_link"/>
+      <origin xyz="${wheel_x} ${y} ${wheel_z}" rpy="0 0 0"/>
+      <axis xyz="0 1 0"/>
+    </joint>
+  </xacro:macro>
+
+  <!-- ================================================================
+       材质
+       ================================================================ -->
+
+  <material name="cakebot_blue">
+    <color rgba="0.10 0.35 0.80 1.0"/>
+  </material>
+
+  <material name="wheel_black">
+    <color rgba="0.04 0.04 0.04 1.0"/>
+  </material>
+
+  <material name="caster_gray">
+    <color rgba="0.45 0.45 0.45 1.0"/>
+  </material>
+
+  <!-- ================================================================
+       机器人主体
+       ================================================================ -->
+
+  <link name="base_link">
+    <visual>
+      <origin xyz="0 0 ${base_z}" rpy="0 0 0"/>
+      <geometry>
+        <box size="${base_length} ${base_width} ${base_height}"/>
+      </geometry>
+      <material name="cakebot_blue"/>
+    </visual>
+
+    <collision>
+      <origin xyz="0 0 ${base_z}" rpy="0 0 0"/>
+      <geometry>
+        <box size="${base_length} ${base_width} ${base_height}"/>
+      </geometry>
+    </collision>
+
+    <xacro:box_inertial
+      mass="${base_mass}"
+      x="${base_length}"
+      y="${base_width}"
+      z="${base_height}"
+      origin_z="${base_z}"/>
+  </link>
+
+  <!-- 左右驱动轮：左为 +y，右为 -y。 -->
+  <xacro:drive_wheel side="left" y="${wheel_separation / 2.0}"/>
+  <xacro:drive_wheel side="right" y="${-wheel_separation / 2.0}"/>
+
+  <!--
+    简化万向轮：当前使用球体表示，采用 fixed joint。
+    caster_x/caster_y/caster_z/caster_yaw 均可直接调整。
+    后续进入 Gazebo 阶段时，再替换为真实的转向结构和碰撞参数。
+  -->
+  <link name="caster_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <sphere radius="${caster_radius}"/>
+      </geometry>
+      <material name="caster_gray"/>
+    </visual>
+
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <sphere radius="${caster_radius}"/>
+      </geometry>
+    </collision>
+
+    <inertial>
+      <mass value="${caster_mass}"/>
+      <inertia
+        ixx="${2.0 * caster_mass * caster_radius * caster_radius / 5.0}"
+        ixy="0.0"
+        ixz="0.0"
+        iyy="${2.0 * caster_mass * caster_radius * caster_radius / 5.0}"
+        iyz="0.0"
+        izz="${2.0 * caster_mass * caster_radius * caster_radius / 5.0}"/>
+    </inertial>
+  </link>
+
+  <joint name="caster_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="caster_link"/>
+    <origin xyz="${caster_x} ${caster_y} ${caster_z}" rpy="0 0 ${caster_yaw}"/>
+  </joint>
+
+</robot>
