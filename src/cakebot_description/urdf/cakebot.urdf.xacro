@@ -7,8 +7,9 @@
     y：机器人左方为正，右方为负
     z：向上为正
 
-  本文件刻意把几何尺寸和组件位置集中在顶部，方便在实物尺寸尚未
-  完全确定时调整。当前模型用于 RViz 显示，暂不包含 Gazebo 插件。
+  本文件刻意把几何尺寸、质量和组件位置集中在顶部，方便在实物尺寸
+  尚未完全确定时调整。模型包含可用于 Gazebo 的 visual、collision 和
+  inertial 数据；差速驱动、传感器等功能由后续阶段单独加入。
 -->
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="cakebot">
 
@@ -30,6 +31,7 @@
   <xacro:arg name="wheel_x" default="0.0"/>
   <xacro:arg name="wheel_z" default="0.05"/>
   <xacro:arg name="wheel_mass" default="0.15"/>
+  <xacro:arg name="wheel_damping" default="0.01"/>
 
   <!--
     万向轮位置：
@@ -61,6 +63,7 @@
   <xacro:property name="wheel_x" value="$(arg wheel_x)"/>
   <xacro:property name="wheel_z" value="$(arg wheel_z)"/>
   <xacro:property name="wheel_mass" value="$(arg wheel_mass)"/>
+  <xacro:property name="wheel_damping" value="$(arg wheel_damping)"/>
 
   <xacro:property name="caster_radius" value="$(arg caster_radius)"/>
   <xacro:property name="caster_x" value="$(arg caster_x)"/>
@@ -88,9 +91,10 @@
     </inertial>
   </xacro:macro>
 
-  <!-- 圆柱惯性：宏内部默认圆柱轴线为 z 轴 -->
-  <xacro:macro name="cylinder_inertial" params="mass radius length">
+  <!-- 圆柱惯性：宏内部默认圆柱轴线为 z 轴。 -->
+  <xacro:macro name="cylinder_inertial" params="mass radius length origin_rpy">
     <inertial>
+      <origin xyz="0 0 0" rpy="${origin_rpy}"/>
       <mass value="${mass}"/>
       <inertia
         ixx="${mass * (3.0 * radius * radius + length * length) / 12.0}"
@@ -99,6 +103,21 @@
         iyy="${mass * (3.0 * radius * radius + length * length) / 12.0}"
         iyz="0.0"
         izz="${mass * radius * radius / 2.0}"/>
+    </inertial>
+  </xacro:macro>
+
+  <!-- 球体惯性。球体的质心位于 link 原点。 -->
+  <xacro:macro name="sphere_inertial" params="mass radius">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="${mass}"/>
+      <inertia
+        ixx="${2.0 * mass * radius * radius / 5.0}"
+        ixy="0.0"
+        ixz="0.0"
+        iyy="${2.0 * mass * radius * radius / 5.0}"
+        iyz="0.0"
+        izz="${2.0 * mass * radius * radius / 5.0}"/>
     </inertial>
   </xacro:macro>
 
@@ -121,17 +140,11 @@
       </collision>
 
       <!-- 惯性坐标系随圆柱一起绕 x 轴旋转，使圆柱轴线为 y 轴。 -->
-      <inertial>
-        <origin xyz="0 0 0" rpy="${pi / 2.0} 0 0"/>
-        <mass value="${wheel_mass}"/>
-        <inertia
-          ixx="${wheel_mass * (3.0 * wheel_radius * wheel_radius + wheel_width * wheel_width) / 12.0}"
-          ixy="0.0"
-          ixz="0.0"
-          iyy="${wheel_mass * wheel_radius * wheel_radius / 2.0}"
-          iyz="0.0"
-          izz="${wheel_mass * (3.0 * wheel_radius * wheel_radius + wheel_width * wheel_width) / 12.0}"/>
-      </inertial>
+      <xacro:cylinder_inertial
+        mass="${wheel_mass}"
+        radius="${wheel_radius}"
+        length="${wheel_width}"
+        origin_rpy="${pi / 2.0} 0 0"/>
     </link>
 
     <joint name="${side}_wheel_joint" type="continuous">
@@ -139,6 +152,7 @@
       <child link="${side}_wheel_link"/>
       <origin xyz="${wheel_x} ${y} ${wheel_z}" rpy="0 0 0"/>
       <axis xyz="0 1 0"/>
+      <dynamics damping="${wheel_damping}" friction="0.0"/>
     </joint>
   </xacro:macro>
 
@@ -193,7 +207,8 @@
   <!--
     简化万向轮：当前使用球体表示，采用 fixed joint。
     caster_x/caster_y/caster_z/caster_yaw 均可直接调整。
-    后续进入 Gazebo 阶段时，再替换为真实的转向结构和碰撞参数。
+    当前用简化球体保证仿真模型闭合；实物尺寸确定后，再替换为真实
+    的万向轮支架和碰撞几何。
   -->
   <link name="caster_link">
     <visual>
@@ -211,16 +226,7 @@
       </geometry>
     </collision>
 
-    <inertial>
-      <mass value="${caster_mass}"/>
-      <inertia
-        ixx="${2.0 * caster_mass * caster_radius * caster_radius / 5.0}"
-        ixy="0.0"
-        ixz="0.0"
-        iyy="${2.0 * caster_mass * caster_radius * caster_radius / 5.0}"
-        iyz="0.0"
-        izz="${2.0 * caster_mass * caster_radius * caster_radius / 5.0}"/>
-    </inertial>
+    <xacro:sphere_inertial mass="${caster_mass}" radius="${caster_radius}"/>
   </link>
 
   <joint name="caster_joint" type="fixed">

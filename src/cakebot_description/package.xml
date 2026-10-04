@@ -14,6 +14,7 @@
   <depend>launch_ros</depend>
   <depend>rviz2</depend>
   <depend>joint_state_publisher</depend>
+  <exec_depend>gazebo_ros</exec_depend>
 
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>
