@@ -9,7 +9,7 @@
 
   本文件刻意把几何尺寸、质量和组件位置集中在顶部，方便在实物尺寸
   尚未完全确定时调整。模型包含可用于 Gazebo 的 visual、collision 和
-  inertial 数据；差速驱动、传感器等功能由后续阶段单独加入。
+  inertial 数据；Gazebo 插件负责仿真中的运动控制和里程计发布。
 -->
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="cakebot">
 
@@ -234,5 +234,42 @@
     <child link="caster_link"/>
     <origin xyz="${caster_x} ${caster_y} ${caster_z}" rpy="0 0 ${caster_yaw}"/>
   </joint>
+
+  <!-- ================================================================
+       Gazebo Classic 差速驱动插件
+
+       该插件把 /cmd_vel 转换成左右驱动轮的角速度，并发布 /odom
+       以及 odom -> base_link TF。
+       ================================================================ -->
+  <gazebo>
+    <plugin name="cakebot_diff_drive" filename="libgazebo_ros_diff_drive.so">
+      <ros>
+        <remapping>cmd_vel:=cmd_vel</remapping>
+        <remapping>odom:=odom</remapping>
+      </ros>
+
+      <!-- 驱动轮关节 -->
+      <left_joint>left_wheel_joint</left_joint>
+      <right_joint>right_wheel_joint</right_joint>
+
+      <!-- 差速运动学参数 -->
+      <wheel_separation>${wheel_separation}</wheel_separation>
+      <wheel_diameter>${2.0 * wheel_radius}</wheel_diameter>
+
+      <!-- 电机仿真限制 -->
+      <max_wheel_torque>20.0</max_wheel_torque>
+      <max_wheel_acceleration>2.0</max_wheel_acceleration>
+
+      <!-- 输出 -->
+      <command_topic>cmd_vel</command_topic>
+      <publish_odom>true</publish_odom>
+      <publish_odom_tf>true</publish_odom_tf>
+      <publish_wheel_tf>true</publish_wheel_tf>
+      <odometry_topic>odom</odometry_topic>
+      <odometry_frame>odom</odometry_frame>
+      <robot_base_frame>base_link</robot_base_frame>
+      <update_rate>50</update_rate>
+    </plugin>
+  </gazebo>
 
 </robot>
