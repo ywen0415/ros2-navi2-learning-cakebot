@@ -47,6 +47,23 @@
   <xacro:arg name="caster_yaw" default="0.0"/>
   <xacro:arg name="caster_mass" default="0.08"/>
 
+  <!-- 激光雷达尺寸与安装位置 -->
+  <xacro:arg name="laser_radius" default="0.035"/>
+  <xacro:arg name="laser_height" default="0.04"/>
+  <xacro:arg name="laser_x" default="0.10"/>
+  <xacro:arg name="laser_y" default="0.0"/>
+  <xacro:arg name="laser_z" default="0.17"/>
+  <xacro:arg name="laser_mass" default="0.08"/>
+
+  <!-- 激光雷达扫描参数 -->
+  <xacro:arg name="laser_update_rate" default="10.0"/>
+  <xacro:arg name="laser_samples" default="360"/>
+  <xacro:arg name="laser_min_angle" default="-3.14159265359"/>
+  <xacro:arg name="laser_max_angle" default="3.14159265359"/>
+  <xacro:arg name="laser_min_range" default="0.12"/>
+  <xacro:arg name="laser_max_range" default="8.0"/>
+  <xacro:arg name="laser_range_resolution" default="0.01"/>
+
   <!--
     将可由命令行覆盖的 xacro:arg 映射为内部属性。
     之后只使用这些属性，避免把外部参数和模型计算混在一起。
@@ -71,6 +88,21 @@
   <xacro:property name="caster_z" value="$(arg caster_z)"/>
   <xacro:property name="caster_yaw" value="$(arg caster_yaw)"/>
   <xacro:property name="caster_mass" value="$(arg caster_mass)"/>
+
+  <xacro:property name="laser_radius" value="$(arg laser_radius)"/>
+  <xacro:property name="laser_height" value="$(arg laser_height)"/>
+  <xacro:property name="laser_x" value="$(arg laser_x)"/>
+  <xacro:property name="laser_y" value="$(arg laser_y)"/>
+  <xacro:property name="laser_z" value="$(arg laser_z)"/>
+  <xacro:property name="laser_mass" value="$(arg laser_mass)"/>
+
+  <xacro:property name="laser_update_rate" value="$(arg laser_update_rate)"/>
+  <xacro:property name="laser_samples" value="$(arg laser_samples)"/>
+  <xacro:property name="laser_min_angle" value="$(arg laser_min_angle)"/>
+  <xacro:property name="laser_max_angle" value="$(arg laser_max_angle)"/>
+  <xacro:property name="laser_min_range" value="$(arg laser_min_range)"/>
+  <xacro:property name="laser_max_range" value="$(arg laser_max_range)"/>
+  <xacro:property name="laser_range_resolution" value="$(arg laser_range_resolution)"/>
 
   <!-- ================================================================
        可复用宏
@@ -172,6 +204,10 @@
     <color rgba="0.45 0.45 0.45 1.0"/>
   </material>
 
+  <material name="laser_black">
+    <color rgba="0.02 0.02 0.02 1.0"/>
+  </material>
+
   <!-- ================================================================
        机器人主体
        ================================================================ -->
@@ -234,6 +270,68 @@
     <child link="caster_link"/>
     <origin xyz="${caster_x} ${caster_y} ${caster_z}" rpy="0 0 ${caster_yaw}"/>
   </joint>
+
+  <!-- 激光雷达安装座。雷达坐标系 z 轴向上，x 轴指向机器人前方。 -->
+  <link name="laser_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <cylinder radius="${laser_radius}" length="${laser_height}"/>
+      </geometry>
+      <material name="laser_black"/>
+    </visual>
+
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <cylinder radius="${laser_radius}" length="${laser_height}"/>
+      </geometry>
+    </collision>
+
+    <xacro:cylinder_inertial
+      mass="${laser_mass}"
+      radius="${laser_radius}"
+      length="${laser_height}"
+      origin_rpy="0 0 0"/>
+  </link>
+
+  <joint name="laser_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="laser_link"/>
+    <origin xyz="${laser_x} ${laser_y} ${laser_z}" rpy="0 0 0"/>
+  </joint>
+
+  <!-- Gazebo Classic 激光雷达传感器。扫描结果由 gazebo_ros 发布到 /scan。 -->
+  <gazebo reference="laser_link">
+    <sensor name="cakebot_laser" type="ray">
+      <pose>0 0 0 0 0 0</pose>
+      <visualize>true</visualize>
+      <update_rate>${laser_update_rate}</update_rate>
+      <ray>
+        <scan>
+          <horizontal>
+            <samples>${laser_samples}</samples>
+            <resolution>1</resolution>
+            <min_angle>${laser_min_angle}</min_angle>
+            <max_angle>${laser_max_angle}</max_angle>
+          </horizontal>
+        </scan>
+        <range>
+          <min>${laser_min_range}</min>
+          <max>${laser_max_range}</max>
+          <resolution>${laser_range_resolution}</resolution>
+        </range>
+      </ray>
+
+      <plugin name="cakebot_laser_sensor" filename="libgazebo_ros_ray_sensor.so">
+        <ros>
+          <remapping>~/out:=scan</remapping>
+        </ros>
+        <output_type>sensor_msgs/LaserScan</output_type>
+        <frame_name>laser_link</frame_name>
+      </plugin>
+    </sensor>
+  </gazebo>
 
   <!-- ================================================================
        Gazebo Classic 差速驱动插件

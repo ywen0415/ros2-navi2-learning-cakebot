@@ -2,6 +2,7 @@
 build/
 install/
 log/
+symlink_install_manifest.txt
 
 # ROS 2 本地运行缓存
 .ros/

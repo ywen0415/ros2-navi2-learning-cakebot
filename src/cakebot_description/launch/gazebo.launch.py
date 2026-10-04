@@ -4,6 +4,7 @@
 
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import Command, LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
@@ -18,6 +19,9 @@ def generate_launch_description():
     )
     default_world = PathJoinSubstitution(
         [package_share, "worlds", "cakebot.world"]
+    )
+    rviz_config_file = PathJoinSubstitution(
+        [package_share, "rviz", "cakebot.rviz"]
     )
     gazebo_launch = PathJoinSubstitution(
         [FindPackageShare("gazebo_ros"), "launch", "gazebo.launch.py"]
@@ -42,6 +46,11 @@ def generate_launch_description():
         "use_sim_time",
         default_value="true",
         description="节点是否使用 Gazebo 仿真时间。",
+    )
+    use_rviz = DeclareLaunchArgument(
+        "use_rviz",
+        default_value="true",
+        description="是否同时启动 RViz。",
     )
     spawn_x = DeclareLaunchArgument(
         "x", default_value="0.0", description="机器人初始 x 坐标。"
@@ -101,12 +110,23 @@ def generate_launch_description():
         ],
     )
 
+    rviz = Node(
+        package="rviz2",
+        executable="rviz2",
+        name="rviz2",
+        output="screen",
+        arguments=["-d", rviz_config_file],
+        condition=IfCondition(LaunchConfiguration("use_rviz")),
+        parameters=[{"use_sim_time": LaunchConfiguration("use_sim_time")}],
+    )
+
     return LaunchDescription(
         [
             world,
             gui,
             paused,
             use_sim_time,
+            use_rviz,
             spawn_x,
             spawn_y,
             spawn_z,
@@ -114,5 +134,6 @@ def generate_launch_description():
             gazebo,
             robot_state_publisher,
             spawn_entity,
+            rviz,
         ]
     )
