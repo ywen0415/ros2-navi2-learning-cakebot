@@ -6,12 +6,37 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
 endif()
 
 find_package(ament_cmake REQUIRED)
+find_package(geometry_msgs REQUIRED)
+find_package(nav_msgs REQUIRED)
+find_package(rclcpp REQUIRED)
 
-# This package currently contains launch files and parameter/configuration
-# resources.  Runtime dependencies are declared in package.xml.
+add_executable(amcl_path_publisher
+  src/amcl_path_publisher.cpp
+)
+
+target_compile_features(amcl_path_publisher PRIVATE cxx_std_17)
+
+ament_target_dependencies(amcl_path_publisher
+  geometry_msgs
+  nav_msgs
+  rclcpp
+)
+
+# Launch files, parameter/configuration resources, and the AMCL path node are
+# installed here. Runtime dependencies are declared in package.xml.
 install(
   DIRECTORY launch config rviz
   DESTINATION share/${PROJECT_NAME}
+)
+
+install(
+  TARGETS amcl_path_publisher
+  DESTINATION lib/${PROJECT_NAME}
+)
+
+install(
+  PROGRAMS scripts/localization_smoke_test.py
+  DESTINATION lib/${PROJECT_NAME}
 )
 
 if(BUILD_TESTING)
