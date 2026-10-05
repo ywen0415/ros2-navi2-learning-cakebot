@@ -6,6 +6,8 @@ symlink_install_manifest.txt
 
 # ROS 2 本地运行缓存
 .ros/
+trajectories/
+test_outputs/
 
 # Python 缓存与测试产物
 __pycache__/
