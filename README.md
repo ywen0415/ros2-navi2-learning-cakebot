@@ -184,6 +184,79 @@ ros2 run cakebot_demo_cpp basic_motion_test --ros-args \
 - 遇到近距离障碍物或激光数据超时后，机器人自动停止；
 - 测试结束后终端输出 `Basic motion test PASSED`，机器人保持静止。
 
+## 1.2.10 键盘控制测试（阶段 7 人工遥控）
+
+`keyboard_control_test` 用键盘发布 `/cmd_vel`，用于在 `test_env.world` 中人工控制机器人探索环境。它不会自主规划路线，也不会替代 SLAM；机器人只执行当前键盘指令。
+
+### 启动
+
+先编译并加载工作空间：
+
+```bash
+source /opt/ros/humble/setup.bash
+colcon build --packages-select cakebot_description cakebot_demo_cpp --symlink-install
+source install/setup.bash
+```
+
+终端 1 启动带墙体和障碍物的测试世界：
+
+```bash
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+ros2 launch cakebot_description gazebo.launch.py \
+  world:=/home/wen/cakebot/src/cakebot_description/worlds/test_env.world
+```
+
+终端 2 运行键盘控制测试，并保持该终端获得焦点：
+
+```bash
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+ros2 run cakebot_demo_cpp keyboard_control_test
+```
+
+### 按键
+
+| 按键 | 动作 |
+|---|---|
+| `w` | 前进 |
+| `s` | 后退 |
+| `a` | 原地左转 |
+| `d` | 原地右转 |
+| `x` 或空格 | 立即停止 |
+| `q` | 停止并退出 |
+
+每次按键会保持对应动作，直到按下另一个动作键、`x` 或空格停止。默认不启用按键超时；按 `Ctrl+C` 或 `q` 可以退出。测试节点退出时会恢复终端设置并发布零速度。
+
+### 可调参数
+
+例如降低速度，并启用 `1.0` 秒按键超时：
+
+```bash
+ros2 run cakebot_demo_cpp keyboard_control_test --ros-args \
+  -p linear_speed:=0.10 \
+  -p angular_speed:=0.50 \
+  -p command_timeout:=1.0
+```
+
+可用参数包括：
+
+| 参数 | 默认值 | 说明 |
+|---|---:|---|
+| `linear_speed` | `0.20` | 前进/后退速度，单位 m/s |
+| `angular_speed` | `0.80` | 原地旋转速度，单位 rad/s |
+| `command_timeout` | `0.0` | 无按键后自动停止的时间，单位 s；`0.0` 表示不启用 |
+
+### 用于 SLAM 建图
+
+运行键盘控制节点的终端负责人工遥控；另开终端启动 `slam_toolbox`，并在 RViz 中观察 `/scan` 和地图。驾驶时应覆盖房间各区域并尽量回到已走过的位置闭合回环。建图完成后再使用 `map_saver_cli` 保存 `map.yaml` 和地图图片。
+
+该节点必须在交互式终端中运行，不能通过后台重定向标准输入运行。启动后如果机器人没有响应，先确认键盘控制终端处于焦点，并检查 `/cmd_vel`：
+
+```bash
+ros2 topic echo /cmd_vel
+```
+
 ## 验收与排查命令
 
 验证 Xacro 和 URDF：

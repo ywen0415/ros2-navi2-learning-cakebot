@@ -7,6 +7,7 @@ endif()
 
 # find dependencies
 find_package(ament_cmake REQUIRED)
+find_package(Threads REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(rclcpp REQUIRED)
@@ -16,7 +17,12 @@ add_executable(basic_motion_test
   src/basic_motion_test.cpp
 )
 
+add_executable(keyboard_control_test
+  src/keyboard_control_test.cpp
+)
+
 target_compile_features(basic_motion_test PRIVATE cxx_std_17)
+target_compile_features(keyboard_control_test PRIVATE cxx_std_17)
 
 ament_target_dependencies(basic_motion_test
   geometry_msgs
@@ -25,8 +31,16 @@ ament_target_dependencies(basic_motion_test
   sensor_msgs
 )
 
+ament_target_dependencies(keyboard_control_test
+  geometry_msgs
+  rclcpp
+)
+
+target_link_libraries(keyboard_control_test Threads::Threads)
+
 install(TARGETS
   basic_motion_test
+  keyboard_control_test
   DESTINATION lib/${PROJECT_NAME}
 )
 
