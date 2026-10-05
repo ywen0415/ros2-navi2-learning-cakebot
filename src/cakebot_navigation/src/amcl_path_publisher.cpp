@@ -7,15 +7,21 @@
 // map），并通过 max_poses 限制内存占用。
 //
 // 可通过参数 input_topic、output_topic、min_distance、min_angle、max_poses
-// 和 clear_on_new_frame 调整接口和采样策略。该轨迹表示 AMCL 的估计历史，
-// 不是 Gazebo 真值轨迹；发生定位校正时出现轻微跳变是预期行为。
+// 和 clear_on_new_frame 调整接口和采样策略。save_csv、csv_output_path
+// 和 csv_overwrite 用于在节点正常退出时自动保存完整的估计轨迹。该轨迹
+// 表示 AMCL 的估计历史，不是 Gazebo 真值轨迹；发生定位校正时出现轻微
+// 跳变是预期行为。
 
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <filesystem>
+#include <fstream>
 #include <functional>
+#include <iomanip>
 #include <memory>
 #include <string>
+#include <system_error>
 #include <utility>
 
 #include "geometry_msgs/msg/pose_stamped.hpp"
@@ -43,6 +49,21 @@ double shortest_angular_distance(double from, double to)
   }
   return difference;
 }
+
+std::string csv_escape(const std::string & value)
+{
+  std::string escaped;
+  escaped.reserve(value.size() + 2);
+  escaped.push_back('"');
+  for (const char character : value) {
+    if (character == '"') {
+      escaped.push_back('"');
+    }
+    escaped.push_back(character);
+  }
+  escaped.push_back('"');
+  return escaped;
+}
 }  // namespace
 
 class AmclPathPublisher : public rclcpp::Node
@@ -57,6 +78,10 @@ public:
     min_angle_ = declare_parameter<double>("min_angle", 0.02);
     max_poses_ = declare_parameter<int>("max_poses", 2000);
     clear_on_new_frame_ = declare_parameter<bool>("clear_on_new_frame", true);
+    save_csv_ = declare_parameter<bool>("save_csv", false);
+    csv_output_path_ = declare_parameter<std::string>(
+      "csv_output_path", "amcl_trajectory.csv");
+    csv_overwrite_ = declare_parameter<bool>("csv_overwrite", false);
 
     if (min_distance_ < 0.0) {
       RCLCPP_WARN(get_logger(), "min_distance cannot be negative; using 0.0");
@@ -71,6 +96,10 @@ public:
       max_poses_ = 1;
     }
 
+    if (save_csv_) {
+      initialize_csv();
+    }
+
     path_publisher_ = create_publisher<nav_msgs::msg::Path>(
       output_topic_, rclcpp::QoS(1).reliable().transient_local());
 
@@ -83,7 +112,148 @@ public:
       input_topic_.c_str(), output_topic_.c_str(), min_distance_, min_angle_);
   }
 
+  bool finalize_csv()
+  {
+    if (!save_csv_) {
+      return true;
+    }
+    if (csv_finalized_) {
+      return csv_finalize_succeeded_;
+    }
+    csv_finalized_ = true;
+
+    if (!csv_stream_.is_open()) {
+      return false;
+    }
+
+    csv_stream_.flush();
+    csv_stream_.close();
+    if (csv_write_failed_ || csv_stream_.fail()) {
+      RCLCPP_ERROR(
+        get_logger(), "Failed to finish trajectory CSV; partial data remains at '%s'",
+        csv_temporary_path_.string().c_str());
+      return false;
+    }
+
+    if (csv_record_count_ == 0) {
+      std::error_code remove_error;
+      std::filesystem::remove(csv_temporary_path_, remove_error);
+      RCLCPP_WARN(
+        get_logger(), "No AMCL poses were recorded; trajectory CSV was not created");
+      csv_finalize_succeeded_ = true;
+      return true;
+    }
+
+    std::error_code rename_error;
+    std::filesystem::rename(csv_temporary_path_, csv_final_path_, rename_error);
+    if (rename_error) {
+      RCLCPP_ERROR(
+        get_logger(), "Failed to move trajectory CSV from '%s' to '%s': %s",
+        csv_temporary_path_.string().c_str(), csv_final_path_.string().c_str(),
+        rename_error.message().c_str());
+      return false;
+    }
+
+    RCLCPP_INFO(
+      get_logger(), "Saved %zu AMCL trajectory poses to '%s'",
+      csv_record_count_, csv_final_path_.string().c_str());
+    csv_finalize_succeeded_ = true;
+    return true;
+  }
+
 private:
+  void initialize_csv()
+  {
+    if (csv_output_path_.empty()) {
+      RCLCPP_ERROR(get_logger(), "csv_output_path cannot be empty when save_csv is enabled");
+      return;
+    }
+
+    std::error_code path_error;
+    csv_final_path_ = std::filesystem::absolute(csv_output_path_, path_error);
+    if (path_error) {
+      RCLCPP_ERROR(
+        get_logger(), "Cannot resolve trajectory CSV path '%s': %s",
+        csv_output_path_.c_str(), path_error.message().c_str());
+      return;
+    }
+
+    const auto parent_path = csv_final_path_.parent_path();
+    if (!parent_path.empty()) {
+      std::filesystem::create_directories(parent_path, path_error);
+      if (path_error) {
+        RCLCPP_ERROR(
+          get_logger(), "Cannot create trajectory directory '%s': %s",
+          parent_path.string().c_str(), path_error.message().c_str());
+        return;
+      }
+    }
+
+    const bool output_exists = std::filesystem::exists(csv_final_path_, path_error);
+    if (path_error) {
+      RCLCPP_ERROR(
+        get_logger(), "Cannot inspect trajectory CSV path '%s': %s",
+        csv_final_path_.string().c_str(), path_error.message().c_str());
+      return;
+    }
+    if (output_exists && !csv_overwrite_) {
+      RCLCPP_ERROR(
+        get_logger(),
+        "Trajectory CSV '%s' already exists; choose another path or set csv_overwrite=true",
+        csv_final_path_.string().c_str());
+      return;
+    }
+
+    csv_temporary_path_ = csv_final_path_;
+    csv_temporary_path_ += ".tmp";
+    csv_stream_.open(csv_temporary_path_, std::ios::out | std::ios::trunc);
+    if (!csv_stream_.is_open()) {
+      RCLCPP_ERROR(
+        get_logger(), "Cannot open temporary trajectory CSV '%s'",
+        csv_temporary_path_.string().c_str());
+      return;
+    }
+
+    csv_stream_ << "index,stamp_sec,stamp_nanosec,frame_id,x,y,yaw\n";
+    csv_stream_ << std::setprecision(17);
+    if (!csv_stream_) {
+      csv_write_failed_ = true;
+      RCLCPP_ERROR(
+        get_logger(), "Cannot write trajectory CSV header to '%s'",
+        csv_temporary_path_.string().c_str());
+      return;
+    }
+
+    RCLCPP_INFO(
+      get_logger(), "AMCL trajectory CSV recording enabled: '%s'",
+      csv_final_path_.string().c_str());
+  }
+
+  void append_csv_pose(const geometry_msgs::msg::PoseStamped & pose)
+  {
+    if (!save_csv_ || !csv_stream_.is_open() || csv_write_failed_) {
+      return;
+    }
+
+    csv_stream_ << csv_record_count_ << ',' << pose.header.stamp.sec << ',' <<
+      pose.header.stamp.nanosec << ',' << csv_escape(pose.header.frame_id) << ',' <<
+      pose.pose.position.x << ',' << pose.pose.position.y << ',' <<
+      yaw_from_quaternion(pose.pose.orientation) << '\n';
+
+    if (!csv_stream_) {
+      csv_write_failed_ = true;
+      RCLCPP_ERROR(
+        get_logger(), "Failed while writing trajectory CSV '%s'",
+        csv_temporary_path_.string().c_str());
+      return;
+    }
+
+    ++csv_record_count_;
+    if (csv_record_count_ % 100 == 0) {
+      csv_stream_.flush();
+    }
+  }
+
   void pose_callback(const geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr message)
   {
     if (message->header.frame_id.empty()) {
@@ -125,6 +295,7 @@ private:
       }
     }
 
+    append_csv_pose(pose);
     path_.poses.push_back(std::move(pose));
     if (path_.poses.size() > static_cast<std::size_t>(max_poses_)) {
       path_.poses.erase(path_.poses.begin());
@@ -139,6 +310,16 @@ private:
   double min_angle_{0.02};
   int max_poses_{2000};
   bool clear_on_new_frame_{true};
+  bool save_csv_{false};
+  std::string csv_output_path_;
+  bool csv_overwrite_{false};
+  bool csv_finalized_{false};
+  bool csv_finalize_succeeded_{false};
+  bool csv_write_failed_{false};
+  std::size_t csv_record_count_{0};
+  std::filesystem::path csv_final_path_;
+  std::filesystem::path csv_temporary_path_;
+  std::ofstream csv_stream_;
 
   nav_msgs::msg::Path path_;
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr path_publisher_;
@@ -149,7 +330,10 @@ private:
 int main(int argc, char ** argv)
 {
   rclcpp::init(argc, argv);
-  rclcpp::spin(std::make_shared<AmclPathPublisher>());
+  auto node = std::make_shared<AmclPathPublisher>();
+  rclcpp::spin(node);
+  const bool csv_saved = node->finalize_csv();
+  node.reset();
   rclcpp::shutdown();
-  return 0;
+  return csv_saved ? 0 : 1;
 }

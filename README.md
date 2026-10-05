@@ -166,6 +166,9 @@ ros2 launch cakebot_navigation localization.launch.py \
 | `use_sim_time` | `true` | 地图服务器、AMCL 和 RViz 是否使用 Gazebo 时间 |
 | `use_rviz` | `true` | 是否启动定位 RViz；无图形界面时设为 `false` |
 | `rviz_config_file` | 包内 `rviz/localization.rviz` | 定位 RViz 配置文件路径 |
+| `save_trajectory` | `false` | 定位进程正常退出时是否自动保存完整 AMCL 轨迹 CSV |
+| `trajectory_file` | `amcl_trajectory.csv` | CSV 输出路径；相对路径以启动命令的工作目录为基准 |
+| `trajectory_overwrite` | `false` | 是否允许覆盖已有的同名 CSV |
 
 定位 RViz 的 Fixed Frame 为 `map`，预置显示 `/map`、`/scan`、机器人模型、TF、`/particle_cloud`、`/amcl_pose` 和 `/amcl_path`。使用顶部工具栏的 **2D Pose Estimate** 可向 `/initialpose` 发布初始位姿。
 
@@ -460,6 +463,26 @@ ros2 run cakebot_navigation localization_smoke_test.py --ros-args \
 
 ### 7.6 阶段 8 验收指令与完成标准
 
+RViz 无法稳定运行时，可以关闭 RViz 并启用轨迹自动保存。建议每次验收使用不同的绝对路径：
+
+```bash
+ros2 launch cakebot_navigation localization.launch.py \
+  map:=/home/wen/cakebot/maps/test_env.yaml \
+  use_rviz:=false \
+  save_trajectory:=true \
+  trajectory_file:=/home/wen/cakebot/trajectories/amcl_run_01.csv
+```
+
+设置初始位姿并用键盘控制机器人移动后，在这个定位 launch 终端按一次 `Ctrl+C`。`amcl_path_publisher` 会在退出过程中保存 CSV，并输出保存的轨迹点数量和绝对路径。父目录不存在时会自动创建；默认不会覆盖已有文件，如确实需要覆盖可追加 `trajectory_overwrite:=true`。
+
+CSV 的字段为：
+
+```text
+index,stamp_sec,stamp_nanosec,frame_id,x,y,yaw
+```
+
+其中 `x`、`y` 和 `yaw` 是 AMCL 在 `map` 坐标系中的估计位姿。CSV 使用与 `/amcl_path` 相同的距离和角度筛选规则，但会保留本次运行的全部轨迹点，不受 RViz 路径显示所用 `max_poses` 上限影响。没有收到任何 `/amcl_pose` 时不会生成正式 CSV。正常的 `Ctrl+C`、`SIGINT` 或 `SIGTERM` 会触发保存；`SIGKILL`、系统断电或虚拟机崩溃无法执行退出保存，此时目标路径旁可能留下带 `.tmp` 后缀的未完成数据。
+
 运行期间可在额外终端检查：
 
 ```bash
@@ -480,6 +503,7 @@ ros2 run tf2_ros tf2_echo map base_link
 - RViz 设置初始位姿后，AMCL 发布 `/amcl_pose`、`/particle_cloud` 和稳定的 `map → odom`；
 - `map → odom → base_link → laser_link` TF 链完整；
 - 遥控移动时激光轮廓与地图基本对齐，`/amcl_path` 持续更新；
+- 开启 `save_trajectory` 后正常结束定位，CSV 中包含多行不同的 AMCL 位姿；
 - 冒烟测试在基础检查和可选移动检查中输出 `Localization smoke test PASSED`。
 
 ## 8. 基础运动测试
