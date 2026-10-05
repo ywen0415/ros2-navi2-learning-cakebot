@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
 
+"""仅在 RViz 中显示 cakebot 机器人模型。
+
+用途：加载 Xacro、启动 robot_state_publisher 和 joint_state_publisher，
+用于检查机器人外形、关节和静态 TF。本脚本不启动 Gazebo、激光雷达、
+差速驱动或 SLAM，适合模型显示和 URDF 调试。
+"""
+
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.conditions import IfCondition

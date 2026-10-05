@@ -9,8 +9,13 @@ endif()
 find_package(ament_cmake REQUIRED)
 
 install(
-  DIRECTORY urdf launch rviz worlds
+  DIRECTORY urdf launch rviz worlds config
   DESTINATION share/${PROJECT_NAME}
+)
+
+install(
+  PROGRAMS scripts/slam_map_autosaver.py
+  DESTINATION lib/${PROJECT_NAME}
 )
 
 if(BUILD_TESTING)

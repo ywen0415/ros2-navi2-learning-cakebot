@@ -12,10 +12,14 @@
   <depend>xacro</depend>
   <depend>robot_state_publisher</depend>
   <depend>launch_ros</depend>
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>nav_msgs</exec_depend>
   <depend>rviz2</depend>
   <depend>joint_state_publisher</depend>
   <exec_depend>gazebo_ros</exec_depend>
   <exec_depend>gazebo_plugins</exec_depend>
+  <exec_depend>slam_toolbox</exec_depend>
+  <exec_depend>nav2_map_server</exec_depend>
 
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>

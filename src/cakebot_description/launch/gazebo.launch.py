@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 
-"""启动 Gazebo Classic 并生成 cakebot。"""
+"""启动 Gazebo Classic 仿真并生成 cakebot。
+
+用途：启动 Gazebo 世界、robot_state_publisher、机器人实体和可选的 RViz。
+本脚本不启动 SLAM；建图时通常与 slam.launch.py 配合使用，并将本脚本的
+use_rviz:=false，避免同时打开两个 RViz。
+"""
 
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
