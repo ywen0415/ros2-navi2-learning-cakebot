@@ -1,6 +1,6 @@
 # cakebot ROS 2 仿真、建图与定位说明
 
-本项目用于学习 ROS 2 Humble、Gazebo Classic、TF、二维激光雷达、SLAM 和 Nav2。当前已经完成机器人仿真、差速驱动、里程计、激光雷达、人工遥控、在线建图和地图保存；当前重点是阶段 8：使用 AMCL 在已保存地图中定位，并在 RViz 观察估计位姿和轨迹。
+本项目用于学习 ROS 2 Humble、Gazebo Classic、TF、激光雷达、SLAM 和 Nav2。当前已经完成机器人仿真、差速驱动、里程计、激光雷达、人工遥控、在线建图、地图保存和 AMCL 定位；当前重点是阶段 8.5：建立 MID-360 三维点云到现有二维建图/定位链路的感知适配层。
 
 ## 1. 环境与编译
 
@@ -67,13 +67,41 @@ colcon build \
 |---|---|
 | `/cmd_vel` | 机器人速度指令 |
 | `/odom` | Gazebo 差速驱动里程计 |
-| `/scan` | `sensor_msgs/msg/LaserScan` 二维雷达数据 |
+| `/lidar/points_raw` | `sensor_msgs/msg/PointCloud2` 三维雷达原始点云；阶段 8.5 的感知适配层输入 |
+| `/lidar/imu` | `sensor_msgs/msg/Imu` 雷达内置 IMU 数据；阶段 8.5 只保留接口，暂不参与建图、定位或里程计融合 |
+| `/scan` | `sensor_msgs/msg/LaserScan` 二维扫描；二维仿真模式由雷达直接发布，MID-360 模式由 `/lidar/points_raw` 投影生成，供 SLAM Toolbox 和 AMCL 使用 |
 | `/map` | 建图时由 `slam_toolbox` 发布；定位时由 `map_server` 加载并发布保存的地图 |
 | `/amcl_pose` | AMCL 输出的当前定位结果，消息类型为 `PoseWithCovarianceStamped` |
 | `/particle_cloud` | AMCL 粒子云，用于观察定位是否收敛 |
 | `/amcl_path` | 项目节点根据 `/amcl_pose` 累积的估计轨迹，消息类型为 `nav_msgs/Path` |
 | `odom → base_link → laser_link` | 建图和定位都必须存在的基础 TF 链 |
 | `map → odom` | 建图时由 `slam_toolbox` 发布；定位时由 AMCL 发布；两者不能同时运行 |
+
+### 2.1 阶段 8.5 感知接口契约
+
+阶段 8.5 使用以下数据流：
+
+```text
+仿真三维雷达 / 真机 MID-360
+              │
+              ▼
+ /lidar/points_raw  (PointCloud2)
+              │
+              ▼
+  pointcloud_to_laserscan
+              │
+              ▼
+       /scan  (LaserScan)
+              │
+              ├── SLAM Toolbox
+              └── AMCL
+```
+
+- SLAM Toolbox 和 AMCL 继续只使用 `/scan`，不直接依赖 Livox 驱动或私有消息类型。
+- 三维仿真或真机模式下，`/scan` 只能由点云转换节点发布，不得同时存在第二个 `/scan` 发布者。
+- `/lidar/points_raw` 必须使用标准 `PointCloud2`，消息至少包含 `x`、`y`、`z` 字段，其 `frame_id` 应与机器人 TF 中的 `laser_link` 一致。
+- `/lidar/points_raw` 和 `/lidar/imu` 保留给后续阶段；阶段 8.5 不将三维点云接入避障。过滤点云、局部代价地图和 Collision Monitor 在阶段 15 实现。
+- 二维仿真兼容模式可继续由雷达直接发布 `/scan`，此时不要启动点云转换节点。
 
 ## 3. Launch 脚本
 
