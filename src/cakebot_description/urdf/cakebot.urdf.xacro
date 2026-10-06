@@ -55,6 +55,26 @@
   <xacro:arg name="laser_z" default="0.17"/>
   <xacro:arg name="laser_mass" default="0.08"/>
 
+  <!--
+    感知模式：
+      laser_2d  : 保留原有的二维 LaserScan 传感器；
+      mid360_sim: 使用带垂直扫描的三维仿真雷达，输出 PointCloud2。
+    两种模式只能同时启用一种，避免产生两个传感器发布同一个接口。
+  -->
+  <xacro:arg name="sensor_mode" default="laser_2d"/>
+  <!-- 是否在 Gazebo GUI 中绘制雷达射线；不影响传感器消息发布。 -->
+  <xacro:arg name="visualize_lidar" default="true"/>
+  <xacro:arg name="mid360_update_rate" default="10.0"/>
+  <xacro:arg name="mid360_horizontal_samples" default="360"/>
+  <!-- 仿真默认用 16 条垂直采样保持 Gazebo 在普通电脑上接近10 Hz；真机点云密度由驱动器决定。 -->
+  <xacro:arg name="mid360_vertical_samples" default="16"/>
+  <xacro:arg name="mid360_min_vertical_angle" default="-0.1221730476"/>
+  <xacro:arg name="mid360_max_vertical_angle" default="0.9075712110"/>
+  <xacro:arg name="mid360_min_range" default="0.10"/>
+  <xacro:arg name="mid360_max_range" default="40.0"/>
+  <xacro:arg name="mid360_range_resolution" default="0.01"/>
+  <xacro:arg name="mid360_points_topic" default="lidar/points_raw"/>
+
   <!-- 激光雷达扫描参数 -->
   <xacro:arg name="laser_update_rate" default="10.0"/>
   <xacro:arg name="laser_samples" default="360"/>
@@ -95,6 +115,18 @@
   <xacro:property name="laser_y" value="$(arg laser_y)"/>
   <xacro:property name="laser_z" value="$(arg laser_z)"/>
   <xacro:property name="laser_mass" value="$(arg laser_mass)"/>
+
+  <xacro:property name="sensor_mode" value="$(arg sensor_mode)"/>
+  <xacro:property name="visualize_lidar" value="$(arg visualize_lidar)"/>
+  <xacro:property name="mid360_update_rate" value="$(arg mid360_update_rate)"/>
+  <xacro:property name="mid360_horizontal_samples" value="$(arg mid360_horizontal_samples)"/>
+  <xacro:property name="mid360_vertical_samples" value="$(arg mid360_vertical_samples)"/>
+  <xacro:property name="mid360_min_vertical_angle" value="$(arg mid360_min_vertical_angle)"/>
+  <xacro:property name="mid360_max_vertical_angle" value="$(arg mid360_max_vertical_angle)"/>
+  <xacro:property name="mid360_min_range" value="$(arg mid360_min_range)"/>
+  <xacro:property name="mid360_max_range" value="$(arg mid360_max_range)"/>
+  <xacro:property name="mid360_range_resolution" value="$(arg mid360_range_resolution)"/>
+  <xacro:property name="mid360_points_topic" value="$(arg mid360_points_topic)"/>
 
   <xacro:property name="laser_update_rate" value="$(arg laser_update_rate)"/>
   <xacro:property name="laser_samples" value="$(arg laser_samples)"/>
@@ -301,37 +333,86 @@
     <origin xyz="${laser_x} ${laser_y} ${laser_z}" rpy="0 0 0"/>
   </joint>
 
-  <!-- Gazebo Classic 激光雷达传感器。扫描结果由 gazebo_ros 发布到 /scan。 -->
-  <gazebo reference="laser_link">
-    <sensor name="cakebot_laser" type="ray">
-      <pose>0 0 0 0 0 0</pose>
-      <visualize>true</visualize>
-      <update_rate>${laser_update_rate}</update_rate>
-      <ray>
-        <scan>
-          <horizontal>
-            <samples>${laser_samples}</samples>
-            <resolution>1</resolution>
-            <min_angle>${laser_min_angle}</min_angle>
-            <max_angle>${laser_max_angle}</max_angle>
-          </horizontal>
-        </scan>
-        <range>
-          <min>${laser_min_range}</min>
-          <max>${laser_max_range}</max>
-          <resolution>${laser_range_resolution}</resolution>
-        </range>
-      </ray>
+  <!--
+    Gazebo Classic 二维激光雷达。扫描结果发布到 /scan。
+    这是默认模式，用于保持阶段 5–8 的旧流程可回归。
+  -->
+  <xacro:if value="${sensor_mode == 'laser_2d'}">
+    <gazebo reference="laser_link">
+      <sensor name="cakebot_laser" type="ray">
+        <pose>0 0 0 0 0 0</pose>
+        <visualize>${visualize_lidar}</visualize>
+        <update_rate>${laser_update_rate}</update_rate>
+        <ray>
+          <scan>
+            <horizontal>
+              <samples>${laser_samples}</samples>
+              <resolution>1</resolution>
+              <min_angle>${laser_min_angle}</min_angle>
+              <max_angle>${laser_max_angle}</max_angle>
+            </horizontal>
+          </scan>
+          <range>
+            <min>${laser_min_range}</min>
+            <max>${laser_max_range}</max>
+            <resolution>${laser_range_resolution}</resolution>
+          </range>
+        </ray>
 
-      <plugin name="cakebot_laser_sensor" filename="libgazebo_ros_ray_sensor.so">
-        <ros>
-          <remapping>~/out:=scan</remapping>
-        </ros>
-        <output_type>sensor_msgs/LaserScan</output_type>
-        <frame_name>laser_link</frame_name>
-      </plugin>
-    </sensor>
-  </gazebo>
+        <plugin name="cakebot_laser_sensor" filename="libgazebo_ros_ray_sensor.so">
+          <ros>
+            <remapping>~/out:=scan</remapping>
+          </ros>
+          <output_type>sensor_msgs/LaserScan</output_type>
+          <frame_name>laser_link</frame_name>
+        </plugin>
+      </sensor>
+    </gazebo>
+  </xacro:if>
+
+  <!--
+    Gazebo Classic MID-360 近似仿真：水平 360 度、垂直 -7 度到 52 度。
+    输出为 sensor_msgs/PointCloud2，供 cakebot_perception 转换为 /scan。
+    这个模式不直接发布 /scan，避免与点云适配器重复。
+  -->
+  <xacro:if value="${sensor_mode == 'mid360_sim'}">
+    <gazebo reference="laser_link">
+      <sensor name="cakebot_mid360" type="ray">
+        <pose>0 0 0 0 0 0</pose>
+        <visualize>${visualize_lidar}</visualize>
+        <update_rate>${mid360_update_rate}</update_rate>
+        <ray>
+          <scan>
+            <horizontal>
+              <samples>${mid360_horizontal_samples}</samples>
+              <resolution>1</resolution>
+              <min_angle>-3.14159265359</min_angle>
+              <max_angle>3.14159265359</max_angle>
+            </horizontal>
+            <vertical>
+              <samples>${mid360_vertical_samples}</samples>
+              <resolution>1</resolution>
+              <min_angle>${mid360_min_vertical_angle}</min_angle>
+              <max_angle>${mid360_max_vertical_angle}</max_angle>
+            </vertical>
+          </scan>
+          <range>
+            <min>${mid360_min_range}</min>
+            <max>${mid360_max_range}</max>
+            <resolution>${mid360_range_resolution}</resolution>
+          </range>
+        </ray>
+
+        <plugin name="cakebot_mid360_sensor" filename="libgazebo_ros_ray_sensor.so">
+          <ros>
+            <remapping>~/out:=${mid360_points_topic}</remapping>
+          </ros>
+          <output_type>sensor_msgs/PointCloud2</output_type>
+          <frame_name>laser_link</frame_name>
+        </plugin>
+      </sensor>
+    </gazebo>
+  </xacro:if>
 
   <!-- ================================================================
        Gazebo Classic 差速驱动插件

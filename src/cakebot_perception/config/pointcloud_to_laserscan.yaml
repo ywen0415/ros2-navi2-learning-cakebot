@@ -1,0 +1,22 @@
+pointcloud_to_laserscan:
+  ros__parameters:
+    # Keep the generated scan in the existing sensor frame so SLAM Toolbox
+    # and AMCL can continue to use base_link -> laser_link unchanged.
+    target_frame: laser_link
+    transform_tolerance: 0.05
+
+    # Select a stable horizontal band around the lidar. The floor is about
+    # 0.17 m below laser_link and is intentionally excluded from localization.
+    min_height: -0.05
+    max_height: 0.20
+
+    # Match the former 360-sample, 10 Hz 2D lidar interface.
+    angle_min: -3.14159265359
+    angle_max: 3.14159265359
+    angle_increment: 0.01745329252
+    scan_time: 0.10
+    range_min: 0.12
+    range_max: 8.0
+
+    use_inf: true
+    inf_epsilon: 1.0

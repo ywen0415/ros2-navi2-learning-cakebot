@@ -57,6 +57,34 @@ def generate_launch_description():
         default_value="true",
         description="是否同时启动 RViz。",
     )
+    sensor_mode = DeclareLaunchArgument(
+        "sensor_mode",
+        default_value="laser_2d",
+        description=(
+            "仿真感知模式：laser_2d 发布 /scan；"
+            "mid360_sim 发布 /lidar/points_raw。"
+        ),
+    )
+    visualize_lidar = DeclareLaunchArgument(
+        "visualize_lidar",
+        default_value="true",
+        description="是否在 Gazebo GUI 中显示雷达射线；不影响传感器数据。",
+    )
+    mid360_update_rate = DeclareLaunchArgument(
+        "mid360_update_rate",
+        default_value="10.0",
+        description="MID-360 仿真点云更新频率（Hz）。",
+    )
+    mid360_horizontal_samples = DeclareLaunchArgument(
+        "mid360_horizontal_samples",
+        default_value="360",
+        description="MID-360 仿真水平采样数。",
+    )
+    mid360_vertical_samples = DeclareLaunchArgument(
+        "mid360_vertical_samples",
+        default_value="16",
+        description="MID-360 仿真垂直采样数。",
+    )
     spawn_x = DeclareLaunchArgument(
         "x", default_value="0.0", description="机器人初始 x 坐标。"
     )
@@ -70,7 +98,22 @@ def generate_launch_description():
         "yaw", default_value="0.0", description="机器人初始 yaw 角，单位为弧度。"
     )
 
-    robot_description = Command(["xacro ", xacro_file])
+    robot_description = Command(
+        [
+            "xacro ",
+            xacro_file,
+            " sensor_mode:=",
+            LaunchConfiguration("sensor_mode"),
+            " visualize_lidar:=",
+            LaunchConfiguration("visualize_lidar"),
+            " mid360_update_rate:=",
+            LaunchConfiguration("mid360_update_rate"),
+            " mid360_horizontal_samples:=",
+            LaunchConfiguration("mid360_horizontal_samples"),
+            " mid360_vertical_samples:=",
+            LaunchConfiguration("mid360_vertical_samples"),
+        ]
+    )
 
     gazebo = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(gazebo_launch),
@@ -132,6 +175,11 @@ def generate_launch_description():
             paused,
             use_sim_time,
             use_rviz,
+            sensor_mode,
+            visualize_lidar,
+            mid360_update_rate,
+            mid360_horizontal_samples,
+            mid360_vertical_samples,
             spawn_x,
             spawn_y,
             spawn_z,

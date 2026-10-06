@@ -5,13 +5,20 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
 
-# find dependencies
+# Launch/configuration resources and the runtime smoke-test executable are
+# installed here. Their Python/ROS dependencies are runtime dependencies in
+# package.xml.
 find_package(ament_cmake REQUIRED)
-find_package(pointcloud_to_laserscan REQUIRED)
-find_package(sensor_msgs REQUIRED)
-find_package(rclpy REQUIRED)
-find_package(tf2_ros REQUIRED)
-find_package(launch_ros REQUIRED)
+
+install(
+  DIRECTORY launch config
+  DESTINATION share/${PROJECT_NAME}
+)
+
+install(
+  PROGRAMS scripts/perception_smoke_test.py
+  DESTINATION lib/${PROJECT_NAME}
+)
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
