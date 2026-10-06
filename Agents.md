@@ -17,6 +17,7 @@
 | 6 | Gazebo 仿真环境设计 | 在 Gazebo 世界中创建含墙体或障碍物的测试环境，并确认机器人能够用激光雷达观察到这些结构 |
 | 7 | 遥控探索与 SLAM 建图 | 用遥控控制机器人探索 Gazebo 世界，由 SLAM 生成、保存并完善自己的 `map.yaml` 和地图图片 |
 | 8 | AMCL 定位 | 在已保存地图中初始化位姿，获得 `map → odom` |
+| 8.5 | MID-360 感知接口适配 | 建立 `PointCloud2 → LaserScan` 适配层，将三维点云转换为现有 SLAM Toolbox 和 AMCL 使用的 `/scan`；同时保留原始或过滤后的 `PointCloud2` 接口供后续三维避障使用，不修改定位和导航任务层 |
 | 9 | Nav2 启动、手动导航与 Action | 使用 cakebot 自己的 footprint、代价地图和运动限制启动 Nav2；能在 RViz 中完成导航、取消和更换目标，并能解释 Action 的 goal、feedback、result 和 cancel |
 | 10 | C++ 导航 Action 客户端 | C++ 程序能调用 `NavigateToPose` 和 `NavigateThroughPoses`，处理目标接受、进度反馈、成功、失败、取消和服务端不可用 |
 | 11 | Nav2 架构、生命周期与可观测性 | 能解释定位、全局/局部代价地图、规划器、控制器、行为树和 lifecycle manager 的分工；能通过 TF、topic、action、costmap 和日志定位基本故障 |
@@ -32,6 +33,8 @@
 
 ```text
 阶段 8：已知地图中的定位
+  ↓
+阶段 8.5：用感知适配层将 MID-360 三维点云转为定位用二维扫描，并保留三维点云接口
   ↓
 阶段 9：先用 RViz 验证 Nav2 导航闭环，同时理解 Action
   ↓
@@ -52,16 +55,6 @@
 阶段 17–18：锁定真机接口并通过可重复的系统测试
 ```
 
-### 从阶段 9 开始遵守的仿真到真机约束
-
-- 导航上层只依赖标准 ROS 接口：`/cmd_vel`、`/odom`、经感知适配层输出的障碍物数据、`/tf`、`/tf_static` 和 Nav2 Action，不直接依赖 Gazebo API 或具体雷达厂商 SDK。
-- TF 主链保持 `map → odom → base_link → sensor frames`。同一段 TF 只能有一个发布者。
-- 机器人尺寸、footprint、速度/加速度、传感器范围与超时、控制频率都必须参数化，不得只隐含在代码中。
-- 配置按“通用基线 + 仿真覆盖 + 真机覆盖”分层；地图、配置和输出路径通过包资源或 launch 参数解析。
-- 调速必须从低速基线开始，每次只改一组相关参数，并保留 rosbag、配置和评测结果；不以“看起来更快”作为完成标准。
-- 软件 Collision Monitor 只是附加防线，不等价于真机的硬件急停、电机保护或经认证的功能安全。
-- 阶段 15 之前先保持保守速度；阶段 16 才在有安全链和评测指标的前提下提速。
-
 
 ### 第一阶段系统验收原则
 
@@ -77,6 +70,7 @@
 - 阶段 7 运行 `slam_toolbox`，让机器人通过移动和激光扫描获取多处观测，生成并保存 `map.yaml` 和地图图片。建图前需确认 `odom → base_link → laser_link` TF 链路正常。
 - 阶段 7 的“探索”指人工遥控覆盖环境、尽量闭合回环并完善地图，不是自主探索。
 - 阶段 8 的 AMCL 模式使用已保存地图；阶段 13–14 的自主探索模式使用在线 SLAM。两种模式都需要 `map → odom`，但不能让 AMCL 和 `slam_toolbox` 同时发布它。
+- 阶段 8.5 只建立三维雷达到现有二维建图/定位链路的适配：SLAM Toolbox 和 AMCL 继续使用投影后的 `LaserScan`，不在此阶段实现三维避障。过滤后的 `PointCloud2` 在阶段 15 接入局部代价地图和 Collision Monitor。
 - 阶段 14 的前沿探索是核心主线，不再只是阶段 9 之后的可选扩展。
 - `NavigateThroughPoses` 表示按顺序经过多个目标位姿，不是向控制器直接提供一条 `nav_msgs/Path`。
 
