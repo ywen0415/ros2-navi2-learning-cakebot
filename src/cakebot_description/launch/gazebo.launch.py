@@ -2,9 +2,14 @@
 
 """启动 Gazebo Classic 仿真并生成 cakebot。
 
-用途：启动 Gazebo 世界、robot_state_publisher、机器人实体和可选的 RViz。
-本脚本不启动 SLAM；建图时通常与 slam.launch.py 配合使用，并将本脚本的
-use_rviz:=false，避免同时打开两个 RViz。
+启动内容包括 Gazebo 世界、robot_state_publisher、机器人实体和可选的
+RViz。sensor_mode 决定感知接口：
+  - laser_2d：Gazebo 直接发布 /scan；
+  - mid360_sim：Gazebo 只发布 /lidar/points_raw（PointCloud2）。
+
+本 launch 不启动点云适配器、SLAM 或 AMCL。mid360_sim 模式需要另行启动
+cakebot_perception/lidar_adapter.launch.py 才会产生 /scan。建图或定位时通常传入
+use_rviz:=false，由对应的 SLAM/定位 launch 启动唯一的 RViz。
 """
 
 from launch import LaunchDescription

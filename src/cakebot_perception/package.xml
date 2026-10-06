@@ -3,7 +3,7 @@
 <package format="3">
   <name>cakebot_perception</name>
   <version>0.0.0</version>
-  <description>Sensor adapters and perception interfaces for cakebot.</description>
+  <description>PointCloud2-to-LaserScan adapters, configuration, and perception validation tools for cakebot.</description>
   <maintainer email="yuewen808@gmail.com">wen</maintainer>
   <license>Apache-2.0</license>
 

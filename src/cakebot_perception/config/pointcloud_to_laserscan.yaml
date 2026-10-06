@@ -1,16 +1,23 @@
+# 阶段 8.5 的 PointCloud2 -> LaserScan 投影参数。
+#
+# 输入/输出 topic 由 lidar_adapter.launch.py 通过 remapping 配置，本文件只定义
+# 几何和量程规则。目标是从 MID-360 点云中提取稳定水平高度带，供
+# SLAM Toolbox 和 AMCL 建图/定位；这不是三维避障过滤配置。
+#
+# min_height/max_height 相对 target_frame（laser_link）解释。如果雷达安装
+# 高度或姿态改变，必须通过 RViz 重新验证地面被排除、墙体有足够回波。
 pointcloud_to_laserscan:
   ros__parameters:
-    # Keep the generated scan in the existing sensor frame so SLAM Toolbox
-    # and AMCL can continue to use base_link -> laser_link unchanged.
+    # 保持现有传感器坐标系，不改动 base_link -> laser_link 的 TF 契约。
     target_frame: laser_link
     transform_tolerance: 0.05
 
-    # Select a stable horizontal band around the lidar. The floor is about
-    # 0.17 m below laser_link and is intentionally excluded from localization.
+    # 选取雷达附近的稳定水平高度带；地面约在 laser_link 下方 0.17 m，
+    # 因此不会进入定位扫描。
     min_height: -0.05
     max_height: 0.20
 
-    # Match the former 360-sample, 10 Hz 2D lidar interface.
+    # 与原有 360 采样、10 Hz 二维雷达接口保持一致。
     angle_min: -3.14159265359
     angle_max: 3.14159265359
     angle_increment: 0.01745329252

@@ -1,6 +1,6 @@
 # cakebot ROS 2 仿真、建图与定位说明
 
-本项目用于学习 ROS 2 Humble、Gazebo Classic、TF、激光雷达、SLAM 和 Nav2。当前已经完成机器人仿真、差速驱动、里程计、激光雷达、人工遥控、在线建图、地图保存和 AMCL 定位；当前重点是阶段 8.5：建立 MID-360 三维点云到现有二维建图/定位链路的感知适配层。
+本项目用于学习 ROS 2 Humble、Gazebo Classic、TF、激光雷达、SLAM 和 Nav2。当前已经完成机器人仿真、差速驱动、里程计、激光雷达、人工遥控、在线建图、地图保存和 AMCL 定位；阶段 8.5 已建立 MID-360 三维点云到现有二维建图/定位链路的感知适配层，下一步进入阶段 9 的 Nav2 导航闭环。
 
 ## 1. 环境与编译
 
@@ -15,7 +15,8 @@ sudo apt install \
   ros-humble-nav2-amcl \
   ros-humble-nav2-map-server \
   ros-humble-nav2-lifecycle-manager \
-  ros-humble-nav2-rviz-plugins
+  ros-humble-nav2-rviz-plugins \
+  ros-humble-pointcloud-to-laserscan
 ```
 
 编译整个工作空间：
@@ -34,13 +35,13 @@ source /opt/ros/humble/setup.bash
 source /home/wen/cakebot/install/setup.bash
 ```
 
-只编译本项目的三个包：
+只编译本项目的四个包：
 
 ```bash
 cd /home/wen/cakebot
 source /opt/ros/humble/setup.bash
 colcon build \
-  --packages-select cakebot_description cakebot_demo_cpp cakebot_navigation \
+  --packages-select cakebot_description cakebot_demo_cpp cakebot_navigation cakebot_perception \
   --symlink-install
 ```
 
@@ -51,6 +52,7 @@ colcon build \
 | `cakebot_description` | Xacro/URDF、Gazebo 世界、launch、RViz、SLAM 参数和地图自动保存脚本 |
 | `cakebot_demo_cpp` | 基础运动测试和键盘遥控节点 |
 | `cakebot_navigation` | AMCL 参数、静态地图定位 launch、定位 RViz、AMCL 估计轨迹节点和定位冒烟测试脚本 |
+| `cakebot_perception` | MID-360 点云接口、`PointCloud2 → LaserScan` 适配参数和启动文件 |
 
 两个 Gazebo 世界的用途不同：
 
@@ -60,6 +62,13 @@ colcon build \
 | `test_env.world` | 包含墙体和障碍物，用于雷达验证及 SLAM 建图 |
 
 `test_env.world` 是仿真环境，不是 Nav2 使用的地图。SLAM 生成的地图是 `.yaml` 与 `.pgm` 文件。
+
+当前地图按感知来源分目录保存，避免二维雷达地图和 MID-360 投影地图互相覆盖：
+
+| 目录 | 内容 |
+|---|---|
+| `maps/map-2d/` | 原二维雷达流程生成的地图，例如 `test_env.yaml` 和 `test_env.pgm` |
+| `maps/mid360_runs/` | MID-360 点云投影流程生成的地图，例如 `test_env_mid360.yaml` 和 `test_env_mid360.pgm` |
 
 核心话题与 TF：
 
@@ -111,6 +120,7 @@ colcon build \
 |---|---|---|
 | `display.launch.py` | Xacro、`robot_state_publisher`、`joint_state_publisher` 和可选 RViz | 检查模型、关节和静态 TF，不启动 Gazebo |
 | `gazebo.launch.py` | Gazebo、机器人实体、`robot_state_publisher` 和可选 RViz | 基础仿真、运动和传感器测试 |
+| `lidar_adapter.launch.py` | 将 `/lidar/points_raw` 投影成 `/scan` | MID-360 仿真和真机的二维建图/定位适配 |
 | `slam.launch.py` | `slam_toolbox`、可选建图 RViz、可选地图自动保存节点 | 在已经运行的机器人和雷达基础上建图 |
 | `localization.launch.py` | `map_server`、AMCL、生命周期管理器、AMCL 轨迹节点和可选 RViz | 在已保存地图中定位 |
 
@@ -141,6 +151,16 @@ ros2 launch cakebot_description display.launch.py
 ros2 launch cakebot_description gazebo.launch.py
 ```
 
+默认 `sensor_mode:=laser_2d`，由 Gazebo 直接发布 `/scan`。阶段 8.5 的 MID-360 仿真模式只发布三维点云，再由感知适配器转换：
+
+```bash
+ros2 launch cakebot_description gazebo.launch.py \
+  sensor_mode:=mid360_sim \
+  use_rviz:=false
+```
+
+该模式发布 `/lidar/points_raw`（`sensor_msgs/msg/PointCloud2`），不会同时发布 `/scan`。`mid360_update_rate`、`mid360_horizontal_samples` 和 `mid360_vertical_samples` 可用于调整仿真负载；默认值分别为 `10.0`、`360` 和 `16`。垂直采样数是 Gazebo 仿真性能参数，不代表真机 MID-360 的实际点云密度。
+
 | 参数 | 默认值 | 说明 |
 |---|---:|---|
 | `world` | `cakebot.world` | Gazebo 世界文件 |
@@ -149,10 +169,72 @@ ros2 launch cakebot_description gazebo.launch.py
 | `paused` | `false` | 是否暂停仿真 |
 | `use_sim_time` | `true` | ROS 节点是否使用 Gazebo 时间 |
 | `use_rviz` | `true` | 是否同时启动 RViz |
+| `sensor_mode` | `laser_2d` | `laser_2d` 发布 `/scan`；`mid360_sim` 发布 `/lidar/points_raw` |
+| `visualize_lidar` | `true` | 是否在 Gazebo GUI 中显示雷达射线；设为 `false` 不影响消息发布 |
+| `mid360_update_rate` | `10.0` | MID-360 仿真点云更新频率，单位 Hz |
+| `mid360_horizontal_samples` | `360` | MID-360 仿真水平采样数 |
+| `mid360_vertical_samples` | `16` | MID-360 仿真垂直采样数 |
 | `x`、`y`、`z` | `0.0`、`0.0`、`0.01` | 机器人出生位置，单位 m |
 | `yaw` | `0.0` | 机器人出生偏航角，单位 rad |
 
-### 3.4 `slam.launch.py`
+### 3.4 `lidar_adapter.launch.py`
+
+MID-360 仿真模式启动后，在另一个终端启动点云适配器：
+
+```bash
+ros2 launch cakebot_perception lidar_adapter.launch.py \
+  use_sim_time:=true
+```
+
+适配器订阅 `/lidar/points_raw`，选取雷达坐标系中稳定的水平高度带并发布 `/scan`。默认投影范围为 `-0.05～0.20 m`、距离范围为 `0.12～8.0 m`，参数文件位于 `config/pointcloud_to_laserscan.yaml`。二维 `laser_2d` 模式不要启动该适配器。
+
+| 参数 | 默认值 | 说明 |
+|---|---:|---|
+| `use_sim_time` | `false` | 仿真时传 `true`，真机时保持 `false` |
+| `params_file` | 包内 `config/pointcloud_to_laserscan.yaml` | 点云投影参数文件 |
+| `input_cloud_topic` | `/lidar/points_raw` | 输入 `PointCloud2` topic |
+| `output_scan_topic` | `/scan` | 输出 `LaserScan` topic |
+
+投影参数文件当前使用：
+
+| 参数 | 默认值 | 说明 |
+|---|---:|---|
+| `target_frame` | `laser_link` | 转换后的扫描坐标系；保持现有 TF 和 AMCL 配置不变 |
+| `transform_tolerance` | `0.05` | 点云转换等待 TF 的容差，单位 s |
+| `min_height`、`max_height` | `-0.05`、`0.20` | 相对 `laser_link` 的定位用高度带，主动排除地面 |
+| `angle_min`、`angle_max` | `-π`、`π` | 输出完整 360° 扫描 |
+| `angle_increment` | `0.01745329252` | 约 1°，输出约 360 条射线 |
+| `scan_time` | `0.10` | 扫描周期，单位 s |
+| `range_min`、`range_max` | `0.12`、`8.0` | 供现有 SLAM 和 AMCL 使用的有效距离范围，单位 m |
+| `use_inf` | `true` | 没有命中时输出正无穷 |
+
+转换节点采用按需订阅：只有 `/scan` 存在订阅者时才处理输入点云。使用 SLAM、AMCL、RViz 或 `ros2 topic echo /scan` 均会触发转换。
+
+### 3.5 `perception_smoke_test.py`
+
+阶段 8.5 的感知冒烟测试同时检查 `/lidar/points_raw`、`/scan`、传感器 TF、消息频率、有效扫描距离以及 topic 发布者数量：
+
+```bash
+ros2 run cakebot_perception perception_smoke_test.py \
+  --ros-args -p use_sim_time:=true -p timeout_sec:=20.0
+```
+
+默认要求点云和扫描频率至少为 `5 Hz`、扫描至少包含 300 条射线和 20 个有效距离值，并要求 `/scan` 只有一个发布者。测试只使用墙体等稳定高度带生成的 `/scan`，不验证三维避障。
+
+| 参数 | 默认值 | 说明 |
+|---|---:|---|
+| `input_cloud_topic` | `/lidar/points_raw` | 待检查的 `PointCloud2` topic |
+| `scan_topic` | `/scan` | 待检查的投影扫描 topic |
+| `sensor_frame` | `laser_link` | 点云和扫描期望使用的 frame |
+| `base_frame` | `base_link` | TF 检查的父坐标系 |
+| `timeout_sec` | `20.0` | 等待点云、扫描和 TF 的最长时间，单位 s |
+| `min_samples` | `5` | 计算频率前至少接收的消息数 |
+| `min_rate_hz` | `5.0` | 点云和扫描允许的最低频率 |
+| `min_scan_size` | `300` | `LaserScan.ranges` 的最小长度 |
+| `min_valid_ranges` | `20` | 单帧扫描中最少的有限有效距离数 |
+| `require_tf` | `true` | 是否要求 `base_link → laser_link` 可用 |
+
+### 3.6 `slam.launch.py`
 
 该脚本假定 `/scan`、`/odom` 和机器人 TF 已经由仿真或真机发布。它不会启动 Gazebo，也不会生成机器人实体。
 
@@ -175,16 +257,17 @@ RViz 建图配置使用：
 - Map Topic：`/map`
 - LaserScan Topic：`/scan`
 - LaserScan Reliability：`Best Effort`
+- MID-360 原始点云：`/lidar/points_raw`，在二维模式下没有数据属于正常现象
 
 如果没有运行 SLAM，只想检查雷达，请临时把 RViz Fixed Frame 改为 `odom`。
 
-### 3.5 `localization.launch.py`
+### 3.7 `localization.launch.py`
 
 该脚本假定 Gazebo 或真机已经提供 `/scan`、`/odom` 和 `odom → base_link → laser_link`。它加载已有地图并启动 `map_server`、`amcl`、`lifecycle_manager_localization` 与 `amcl_path_publisher`；不会启动 Gazebo，也不会启动 `slam_toolbox`。
 
 ```bash
 ros2 launch cakebot_navigation localization.launch.py \
-  map:=/home/wen/cakebot/maps/test_env.yaml
+  map:=/home/wen/cakebot/maps/map-2d/test_env.yaml
 ```
 
 | 参数 | 默认值 | 说明 |
@@ -198,7 +281,7 @@ ros2 launch cakebot_navigation localization.launch.py \
 | `trajectory_file` | `amcl_trajectory.csv` | CSV 输出路径；相对路径以启动命令的工作目录为基准 |
 | `trajectory_overwrite` | `false` | 是否允许覆盖已有的同名 CSV |
 
-定位 RViz 的 Fixed Frame 为 `map`，预置显示 `/map`、`/scan`、机器人模型、TF、`/particle_cloud`、`/amcl_pose` 和 `/amcl_path`。使用顶部工具栏的 **2D Pose Estimate** 可向 `/initialpose` 发布初始位姿。
+定位 RViz 的 Fixed Frame 为 `map`，预置显示 `/map`、`/scan`、机器人模型、TF、`/particle_cloud`、`/amcl_pose` 和 `/amcl_path`。它还预置了默认关闭的 `/lidar/points_raw` 显示，需要对照原始点云时可手动开启。使用顶部工具栏的 **2D Pose Estimate** 可向 `/initialpose` 发布初始位姿。
 
 定位模式中，`map → odom` 的唯一发布者应当是 AMCL。因此启动 `localization.launch.py` 前，必须停止 `slam.launch.py`。
 
@@ -211,7 +294,7 @@ ros2 launch cakebot_navigation localization.launch.py \
 ```bash
 ros2 launch cakebot_description slam.launch.py \
   autosave_on_shutdown:=true \
-  autosave_map_file:=/home/wen/cakebot/maps/test_env
+  autosave_map_file:=/home/wen/cakebot/maps/map-2d/test_env
 ```
 
 | launch 参数 | 对应行为 |
@@ -224,7 +307,7 @@ ros2 launch cakebot_description slam.launch.py \
 
 ```bash
 ros2 run cakebot_description slam_map_autosaver.py --ros-args \
-  -p output_file:=/home/wen/cakebot/maps/test_env
+  -p output_file:=/home/wen/cakebot/maps/map-2d/test_env
 ```
 
 直接运行时，确认它已经收到 `/map`，再在它所在的终端按 `Ctrl+C`。节点参数只有一个：
@@ -256,7 +339,7 @@ ros2 launch cakebot_description gazebo.launch.py \
 ```bash
 ros2 launch cakebot_description slam.launch.py \
   autosave_on_shutdown:=true \
-  autosave_map_file:=/home/wen/cakebot/maps/test_env
+  autosave_map_file:=/home/wen/cakebot/maps/map-2d/test_env
 ```
 
 等待 RViz 出现地图，并确认没有持续的 TF 或 Message Filter 错误。
@@ -306,8 +389,8 @@ ros2 run cakebot_demo_cpp keyboard_control_test --ros-args \
 默认输出为：
 
 ```text
-/home/wen/cakebot/maps/test_env.yaml
-/home/wen/cakebot/maps/test_env.pgm
+/home/wen/cakebot/maps/map-2d/test_env.yaml
+/home/wen/cakebot/maps/map-2d/test_env.pgm
 ```
 
 ### 5.5 不启用自动保存时
@@ -315,9 +398,9 @@ ros2 run cakebot_demo_cpp keyboard_control_test --ros-args \
 保持 SLAM 运行，在另一个终端执行：
 
 ```bash
-mkdir -p /home/wen/cakebot/maps
+mkdir -p /home/wen/cakebot/maps/map-2d
 ros2 run nav2_map_server map_saver_cli \
-  -f /home/wen/cakebot/maps/test_env
+  -f /home/wen/cakebot/maps/map-2d/test_env
 ```
 
 确认保存成功后，再停止键盘、SLAM 和 Gazebo。
@@ -360,10 +443,10 @@ ros2 run tf2_ros tf2_echo base_link laser_link
 ### 6.2 保存结果检查
 
 ```bash
-ls -lh /home/wen/cakebot/maps/test_env.yaml \
-  /home/wen/cakebot/maps/test_env.pgm
-sed -n '1,80p' /home/wen/cakebot/maps/test_env.yaml
-file /home/wen/cakebot/maps/test_env.pgm
+ls -lh /home/wen/cakebot/maps/map-2d/test_env.yaml \
+  /home/wen/cakebot/maps/map-2d/test_env.pgm
+sed -n '1,80p' /home/wen/cakebot/maps/map-2d/test_env.yaml
+file /home/wen/cakebot/maps/map-2d/test_env.pgm
 ```
 
 YAML 至少应包含 `image`、`resolution`、`origin`、`occupied_thresh` 和 `free_thresh`。
@@ -374,7 +457,7 @@ YAML 至少应包含 `image`、`resolution`、`origin`、`occupied_thresh` 和 `
 
 ```bash
 ros2 run nav2_map_server map_server --ros-args \
-  -p yaml_filename:=/home/wen/cakebot/maps/test_env.yaml
+  -p yaml_filename:=/home/wen/cakebot/maps/map-2d/test_env.yaml
 ```
 
 终端 2 激活生命周期节点：
@@ -425,7 +508,7 @@ ros2 launch cakebot_description gazebo.launch.py \
 
 ```bash
 ros2 launch cakebot_navigation localization.launch.py \
-  map:=/home/wen/cakebot/maps/test_env.yaml
+  map:=/home/wen/cakebot/maps/map-2d/test_env.yaml
 ```
 
 等待终端出现 `Managed nodes are active`。此时 RViz 会显示地图和机器人；在尚未设置初始位姿前，粒子云与机器人位置可能不可靠，这是正常现象。
@@ -495,7 +578,7 @@ RViz 无法稳定运行时，可以关闭 RViz 并启用轨迹自动保存。建
 
 ```bash
 ros2 launch cakebot_navigation localization.launch.py \
-  map:=/home/wen/cakebot/maps/test_env.yaml \
+  map:=/home/wen/cakebot/maps/map-2d/test_env.yaml \
   use_rviz:=false \
   save_trajectory:=true \
   trajectory_file:=/home/wen/cakebot/trajectories/amcl_run_01.csv
@@ -534,7 +617,128 @@ ros2 run tf2_ros tf2_echo map base_link
 - 开启 `save_trajectory` 后正常结束定位，CSV 中包含多行不同的 AMCL 位姿；
 - 冒烟测试在基础检查和可选移动检查中输出 `Localization smoke test PASSED`。
 
-## 8. 基础运动测试
+## 8. 阶段 8.5：MID-360 感知适配与回归验证
+
+本阶段只把标准三维点云投影成现有建图和定位链路使用的二维 `/scan`。原始 `/lidar/points_raw` 会被保留，但尚未接入局部代价地图、Collision Monitor 或其他三维避障模块。
+
+以下流程使用 `test_env.world`，所有终端都应先加载 ROS 2 和当前工作空间。
+
+### 8.1 终端 1：启动 MID-360 仿真
+
+```bash
+ros2 launch cakebot_description gazebo.launch.py \
+  world:=/home/wen/cakebot/src/cakebot_description/worlds/test_env.world \
+  sensor_mode:=mid360_sim \
+  visualize_lidar:=false \
+  use_rviz:=false
+```
+
+`visualize_lidar:=false` 只关闭 Gazebo GUI 中的射线绘制，可降低图形负载，不会停止 `/lidar/points_raw`。若点云实际频率明显不足，可先降低 `mid360_vertical_samples` 或 `mid360_horizontal_samples`，再重新验收。
+
+### 8.2 终端 2：启动点云适配器
+
+```bash
+ros2 launch cakebot_perception lidar_adapter.launch.py \
+  use_sim_time:=true
+```
+
+此时数据链应为：
+
+```text
+/lidar/points_raw → pointcloud_to_laserscan → /scan
+```
+
+转换节点按需处理数据；如果还没有 `/scan` 订阅者，`/scan` 暂时没有消息属于正常现象。下一步的冒烟测试、SLAM、AMCL 或 RViz 都会建立订阅。
+
+### 8.3 终端 3：运行感知冒烟测试
+
+```bash
+ros2 run cakebot_perception perception_smoke_test.py \
+  --ros-args \
+  -p use_sim_time:=true \
+  -p timeout_sec:=20.0
+```
+
+通过时输出：
+
+```text
+Perception smoke test PASSED
+```
+
+也可以手动检查接口：
+
+```bash
+ros2 topic type /lidar/points_raw
+ros2 topic hz /lidar/points_raw
+ros2 topic type /scan
+ros2 topic hz /scan
+ros2 topic info /scan --verbose
+ros2 run tf2_ros tf2_echo base_link laser_link
+```
+
+其中 `/scan` 必须恰好有一个发布者。在 `mid360_sim` 模式下若出现两个发布者，通常表示二维雷达实例或另一个点云转换节点仍在运行。
+
+### 8.4 使用 MID-360 投影扫描建图
+
+保持 Gazebo 和适配器运行，在新终端启动 SLAM：
+
+```bash
+ros2 launch cakebot_description slam.launch.py \
+  use_sim_time:=true \
+  autosave_on_shutdown:=true \
+  autosave_map_file:=/home/wen/cakebot/maps/mid360_runs/test_env_mid360
+```
+
+再启动键盘遥控：
+
+```bash
+ros2 run cakebot_demo_cpp keyboard_control_test
+```
+
+完成环境覆盖后，先停止机器人，再在 SLAM 终端按 `Ctrl+C`。应生成：
+
+```text
+/home/wen/cakebot/maps/mid360_runs/test_env_mid360.yaml
+/home/wen/cakebot/maps/mid360_runs/test_env_mid360.pgm
+```
+
+这个地图来自 MID-360 点云的高度带投影，应与 `maps/map-2d/` 中的二维雷达地图分开保存。
+
+### 8.5 使用 MID-360 投影扫描进行 AMCL 定位
+
+停止 `slam.launch.py`，但保持 Gazebo 和点云适配器运行，然后启动定位：
+
+```bash
+ros2 launch cakebot_navigation localization.launch.py \
+  map:=/home/wen/cakebot/maps/mid360_runs/test_env_mid360.yaml \
+  use_sim_time:=true
+```
+
+在 RViz 使用 **2D Pose Estimate** 设置初始位姿，或者运行自动定位检查：
+
+```bash
+ros2 run cakebot_navigation localization_smoke_test.py --ros-args \
+  -p use_sim_time:=true \
+  -p initial_x:=0.0 \
+  -p initial_y:=0.0 \
+  -p initial_yaw:=0.0
+```
+
+默认初始位姿只是示例；若保存地图中的机器人出生位置不在地图原点，应填写与地图匹配的位姿。
+
+### 8.6 阶段 8.5 完成标准
+
+- `mid360_sim` 模式持续发布非空 `/lidar/points_raw`，消息包含 `x`、`y`、`z` 字段，frame 为 `laser_link`；
+- 适配器稳定生成约 360° 的 `/scan`，点云和扫描频率均不低于冒烟测试配置的阈值；
+- `/scan` 恰好只有一个发布者，`base_link → laser_link` TF 可用；
+- `perception_smoke_test.py` 输出 `Perception smoke test PASSED`；
+- SLAM Toolbox 能使用投影后的 `/scan` 建图并保存 `test_env_mid360.yaml/.pgm`；
+- AMCL 能加载 MID-360 流程生成的地图，发布 `/amcl_pose` 和稳定的 `map → odom`；
+- `localization_smoke_test.py` 输出 `Localization smoke test PASSED`；
+- `sensor_mode:=laser_2d` 的旧二维流程仍能运行；
+- 原始三维点云没有在本阶段直接参与避障，SLAM 和 AMCL 不依赖 Livox 私有消息。
+
+## 9. 基础运动测试
 
 `basic_motion_test` 用于验证 `/cmd_vel`、`/odom` 和 `/scan`，不参与 SLAM 建图。先启动 Gazebo，再运行：
 
@@ -565,7 +769,7 @@ ros2 run cakebot_demo_cpp basic_motion_test --ros-args \
 
 成功时终端输出 `Basic motion test PASSED`。该节点运行时不要同时启动键盘控制节点。
 
-## 9. 模型与雷达参数
+## 10. 模型与雷达参数
 
 参数定义在 `src/cakebot_description/urdf/cakebot.urdf.xacro`：
 
@@ -581,10 +785,21 @@ ros2 run cakebot_demo_cpp basic_motion_test --ros-args \
 | `laser_min_range` | `0.12` | 最小测距，单位 m |
 | `laser_max_range` | `8.0` | 最大测距，单位 m |
 | `laser_range_resolution` | `0.01` | 距离分辨率，单位 m |
+| `sensor_mode` | `laser_2d` | `laser_2d` 使用二维雷达；`mid360_sim` 使用三维点云雷达 |
+| `visualize_lidar` | `true` | 是否在 Gazebo GUI 中绘制雷达射线 |
+| `mid360_update_rate` | `10.0` | 三维仿真点云更新频率，单位 Hz |
+| `mid360_horizontal_samples` | `360` | 三维仿真水平采样数 |
+| `mid360_vertical_samples` | `16` | 三维仿真垂直采样数 |
+| `mid360_min_vertical_angle` | `-0.1221730476` | 最小垂直角，约 -7° |
+| `mid360_max_vertical_angle` | `0.9075712110` | 最大垂直角，约 52° |
+| `mid360_min_range` | `0.10` | 三维仿真雷达最小测距，单位 m |
+| `mid360_max_range` | `40.0` | 三维仿真雷达最大测距，单位 m |
+| `mid360_range_resolution` | `0.01` | 三维仿真距离分辨率，单位 m |
+| `mid360_points_topic` | `lidar/points_raw` | 三维仿真点云输出 topic；最终解析为 `/lidar/points_raw` |
 
-当前雷达为无噪声二维仿真雷达。在空的 `cakebot.world` 中，扫描没有击中物体时 `ranges` 可能全部为 `inf`；建图和有效回波测试应使用 `test_env.world`。
+`mid360_sim` 是使用 Gazebo 规则射线实现的近似模型，用于验证 ROS 接口和 `PointCloud2 → LaserScan` 数据链，不模拟真机的非重复扫描模式、噪声、反射率、时间畸变或实际点云密度。二维与三维模式在空的 `cakebot.world` 中都可能没有有效回波；建图和有效距离测试应使用 `test_env.world`。
 
-## 10. 常见问题
+## 11. 常见问题
 
 ### RViz 打开了两个窗口
 
@@ -599,6 +814,42 @@ ros2 run tf2_ros tf2_echo map odom
 ```
 
 如果只进行雷达测试、没有启动 SLAM 或 AMCL，把 RViz Fixed Frame 临时改为 `odom`。
+
+### MID-360 模式存在点云，但 `/scan` 没有消息
+
+`pointcloud_to_laserscan` 采用按需订阅。先确认适配器已经启动，再运行以下任意一个订阅者：
+
+```bash
+ros2 topic echo /scan --once
+```
+
+SLAM、AMCL、RViz 或 `perception_smoke_test.py` 也会触发转换。如果仍无数据，检查输入 topic 和 frame：
+
+```bash
+ros2 topic echo /lidar/points_raw --once --field header
+ros2 run tf2_ros tf2_echo base_link laser_link
+```
+
+### 感知冒烟测试报告 `/scan` 发布者数量不为 1
+
+MID-360 模式中，Gazebo 只应发布 `/lidar/points_raw`，`/scan` 只应由一个点云适配器发布。检查：
+
+```bash
+ros2 topic info /scan --verbose
+ros2 node list
+```
+
+确认使用了 `sensor_mode:=mid360_sim`，并停止重复启动的 `lidar_adapter.launch.py` 或残留的二维雷达仿真实例。
+
+### 感知冒烟测试频率不足或有效距离太少
+
+使用包含墙体和障碍物的 `test_env.world`，并关闭 Gazebo 射线显示：
+
+```bash
+visualize_lidar:=false
+```
+
+若电脑无法维持默认负载，可适当降低 `mid360_vertical_samples` 或 `mid360_horizontal_samples`。点云正常但有效 `/scan` 太少时，检查 `pointcloud_to_laserscan.yaml` 的 `min_height`、`max_height` 和距离范围；不要为了增加点数把地面大量投影进定位扫描。
 
 ### 定位时没有 `map → odom`，或定位不断跳变
 
@@ -630,7 +881,7 @@ ros2 topic info /cmd_vel -v
 
 降低遥控速度，减少急转，确认 `/odom` 和 TF 连续，并重复经过已经建好的区域形成回环。
 
-## 11. 生成目录
+## 12. 生成目录
 
 以下目录由 colcon 生成，不应提交：
 
@@ -638,4 +889,8 @@ ros2 topic info /cmd_vel -v
 - `install/`
 - `log/`
 
-`maps/` 中的 `.yaml` 和 `.pgm` 是阶段 7 的有效成果，可按项目需要保留或提交。
+`maps/` 中的 `.yaml` 和 `.pgm` 是有效实验成果，可按项目需要保留或提交。当前约定：
+
+- `maps/map-2d/` 保存二维雷达流程生成的地图；
+- `maps/mid360_runs/` 保存 MID-360 点云投影流程生成的地图；
+- 同一份 YAML 引用的 PGM 应与其放在同一目录，不要只移动其中一个文件。

@@ -1,6 +1,17 @@
 #!/usr/bin/env python3
 
-"""Check the MID-360 PointCloud2 to LaserScan perception adapter."""
+"""验证 MID-360 PointCloud2 -> LaserScan 感知适配链路。
+
+本脚本不启动 Gazebo、雷达驱动或点云适配器。运行前必须已有：
+  - /lidar/points_raw（PointCloud2）或通过参数指定的等价点云 topic；
+  - 投影后的 /scan（LaserScan）；
+  - base_link -> laser_link 或参数指定的传感器 TF。
+
+检查内容包括点云 xyz 字段、点数、frame、扫描角度/有效距离数、
+点云与扫描频率、TF 可用性、数据新鲜度以及 /scan 是否恰好只有一个发布者。
+成功返回 0，验收失败返回 1，用户中断返回 130。本测试只验证建图/
+定位接口，不证明三维避障或真机功能安全性。
+"""
 
 from collections import deque
 import math

@@ -1,6 +1,9 @@
 cmake_minimum_required(VERSION 3.8)
 project(cakebot_perception)
 
+# 阶段 8.5 感知适配包：本包不编译自定义 C++ 节点，只安装
+# PointCloud2 -> LaserScan 的 launch/参数资源和感知链路冒烟测试脚本。
+
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
 endif()

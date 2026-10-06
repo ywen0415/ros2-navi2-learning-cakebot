@@ -10,6 +10,14 @@
   本文件刻意把几何尺寸、质量和组件位置集中在顶部，方便在实物尺寸
   尚未完全确定时调整。模型包含可用于 Gazebo 的 visual、collision 和
   inertial 数据；Gazebo 插件负责仿真中的运动控制和里程计发布。
+
+  感知仿真支持两种互斥模式：
+    laser_2d：保留阶段 5–8 的二维雷达，直接发布 /scan；
+    mid360_sim：近似模拟 MID-360 的水平/垂直视场，只发布
+                /lidar/points_raw（PointCloud2），再由 cakebot_perception
+                投影为建图和定位使用的 /scan。
+  mid360_sim 用于验证 ROS 接口和适配链路，不模拟真机的扫描模式、
+  反射率、噪声或运动畸变，也不在此文件中实现三维避障。
 -->
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="cakebot">
 
