@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
-"""Launch the navigation part of Nav2 for cakebot.
+"""
+Launch the navigation part of Nav2 for cakebot.
 
 This launch file deliberately starts navigation only.  Gazebo (or the real
 robot), the MID-360 point-cloud adapter, and static-map localization are

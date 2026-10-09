@@ -61,8 +61,10 @@ amcl:
     update_min_a: 0.2
     save_pose_rate: 0.5
 
-    # 初始位姿由 RViz 的 2D Pose Estimate 或测试脚本发布到
-    # /initialpose。这样可以在每次实验中明确控制初始条件。
+    # 默认继续接受 RViz 或测试脚本发布的 /initialpose。
+    # 固定场景的重复实验可通过 localization.launch.py 传入
+    # set_initial_pose:=true 和 initial_x/initial_y/initial_z/initial_yaw；
+    # launch 会覆盖下面的默认值。
     set_initial_pose: false
     always_reset_initial_pose: false
     first_map_only: false

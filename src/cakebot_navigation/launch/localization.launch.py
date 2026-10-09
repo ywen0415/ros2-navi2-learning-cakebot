@@ -71,6 +71,34 @@ def generate_launch_description():
         default_value="false",
         description="是否允许覆盖已存在的轨迹 CSV。",
     )
+    set_initial_pose = DeclareLaunchArgument(
+        "set_initial_pose",
+        default_value="false",
+        description=(
+            "是否在 AMCL 启动时使用 initial_x/initial_y/"
+            "initial_z/initial_yaw 设置初始位姿。"
+        ),
+    )
+    initial_x = DeclareLaunchArgument(
+        "initial_x",
+        default_value="0.0",
+        description="AMCL 初始位姿的 map 坐标 x，单位 m。",
+    )
+    initial_y = DeclareLaunchArgument(
+        "initial_y",
+        default_value="0.0",
+        description="AMCL 初始位姿的 map 坐标 y，单位 m。",
+    )
+    initial_z = DeclareLaunchArgument(
+        "initial_z",
+        default_value="0.0",
+        description="AMCL 初始位姿的 map 坐标 z，平面机器人通常为 0。",
+    )
+    initial_yaw = DeclareLaunchArgument(
+        "initial_yaw",
+        default_value="0.0",
+        description="AMCL 初始航向角，单位 rad。",
+    )
 
     map_server = Node(
         package="nav2_map_server",
@@ -92,7 +120,24 @@ def generate_launch_description():
         output="screen",
         parameters=[
             LaunchConfiguration("params_file"),
-            {"use_sim_time": LaunchConfiguration("use_sim_time")},
+            {
+                "use_sim_time": LaunchConfiguration("use_sim_time"),
+                "set_initial_pose": ParameterValue(
+                    LaunchConfiguration("set_initial_pose"), value_type=bool
+                ),
+                "initial_pose.x": ParameterValue(
+                    LaunchConfiguration("initial_x"), value_type=float
+                ),
+                "initial_pose.y": ParameterValue(
+                    LaunchConfiguration("initial_y"), value_type=float
+                ),
+                "initial_pose.z": ParameterValue(
+                    LaunchConfiguration("initial_z"), value_type=float
+                ),
+                "initial_pose.yaw": ParameterValue(
+                    LaunchConfiguration("initial_yaw"), value_type=float
+                ),
+            },
         ],
         remappings=[("scan", "/scan")],
     )
@@ -153,6 +198,11 @@ def generate_launch_description():
             save_trajectory,
             trajectory_file,
             trajectory_overwrite,
+            set_initial_pose,
+            initial_x,
+            initial_y,
+            initial_z,
+            initial_yaw,
             map_server,
             amcl,
             lifecycle_manager,
