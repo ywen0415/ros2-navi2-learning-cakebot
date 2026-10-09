@@ -51,7 +51,7 @@ colcon build \
 |---|---|
 | `cakebot_description` | Xacro/URDF、Gazebo 世界、launch、RViz、SLAM 参数和地图自动保存脚本 |
 | `cakebot_demo_cpp` | 基础运动测试和键盘遥控节点 |
-| `cakebot_navigation` | AMCL 参数、静态地图定位 launch、定位 RViz、AMCL 估计轨迹节点和定位冒烟测试脚本 |
+| `cakebot_navigation` | AMCL 与 Nav2 参数、静态地图定位和导航 launch、定位与导航 RViz、AMCL 估计轨迹节点和定位冒烟测试脚本 |
 | `cakebot_perception` | MID-360 点云接口、`PointCloud2 → LaserScan` 适配参数和启动文件 |
 
 两个 Gazebo 世界的用途不同：
@@ -123,8 +123,29 @@ colcon build \
 | `lidar_adapter.launch.py` | 将 `/lidar/points_raw` 投影成 `/scan` | MID-360 仿真和真机的二维建图/定位适配 |
 | `slam.launch.py` | `slam_toolbox`、可选建图 RViz、可选地图自动保存节点 | 在已经运行的机器人和雷达基础上建图 |
 | `localization.launch.py` | `map_server`、AMCL、生命周期管理器、AMCL 轨迹节点和可选 RViz | 在已保存地图中定位 |
+| `navigation.launch.py` | Nav2 导航节点、导航生命周期管理器和可选导航 RViz | 在已经运行的静态地图定位系统上进行手动导航 |
 
 `slam.launch.py` 与 `gazebo.launch.py` 分开，是为了能够单独重启 SLAM 而不重置仿真，也便于以后复用到真机。建图时只应启动一个 RViz：Gazebo 使用 `use_rviz:=false`，SLAM 使用默认的 `use_rviz:=true`。
+
+#### 3.1.1 RViz 配置职责
+
+项目包含三份用途不同的 RViz 源配置。`.rviz` 文件只决定显示内容、面板和交互工具，不负责启动 SLAM、AMCL 或 Nav2 算法节点。
+
+| 配置文件 | 默认使用它的 launch | 主要用途 | 关键显示与工具 |
+|---|---|---|---|
+| `cakebot_description/rviz/cakebot.rviz` | `display.launch.py`、`gazebo.launch.py`、`slam.launch.py` | 检查模型、TF、里程计和传感器，以及观察 SLAM 建图 | `/map`、RobotModel、TF、`/scan`、默认开启的 `/lidar/points_raw`、`/odom` |
+| `cakebot_navigation/rviz/localization.rviz` | `localization.launch.py` | 单独调试已知地图中的 AMCL 定位 | `/map`、`/scan`、`/particle_cloud`、`/amcl_pose`、`/amcl_path`、**2D Pose Estimate**；原始点云默认关闭 |
+| `cakebot_navigation/rviz/navigation.rviz` | `navigation.launch.py` | 阶段 9 的 Nav2 手动导航和 Action 实验 | 保留 AMCL 定位显示，并增加全局/局部代价地图、两种 footprint、`/plan`、`/local_plan`、**Nav2 Goal** 和 **Navigation 2** 面板 |
+
+三份配置的 Fixed Frame 默认都是 `map`。只检查模型、雷达或里程计且没有运行 SLAM/AMCL 时，`map` 尚不存在，应在 RViz 中临时改为 `odom`。**2D Pose Estimate** 用于向 `/initialpose` 设置机器人当前位姿；**Nav2 Goal** 则通过 Nav2 Action 设置机器人要到达的目标，两者用途不同。
+
+同一次实验通常只启动一个 RViz：
+
+- 建图：`gazebo.launch.py use_rviz:=false`，由 `slam.launch.py` 打开 `cakebot.rviz`；
+- 只做定位：`gazebo.launch.py use_rviz:=false`，由 `localization.launch.py` 打开 `localization.rviz`；
+- 做导航：Gazebo 和 `localization.launch.py` 都使用 `use_rviz:=false`，由 `navigation.launch.py` 打开 `navigation.rviz`。导航配置已经包含定位所需的显示和 **2D Pose Estimate**，不需要再打开定位 RViz。
+
+`install/` 中同名 `.rviz` 文件是 `colcon build --symlink-install` 生成的安装入口，当前指向 `src/` 下的源配置。修改时只编辑 `src/` 中的文件；launch 会通过包安装路径找到它们。
 
 ### 3.2 `display.launch.py`
 
@@ -803,7 +824,7 @@ ros2 run cakebot_demo_cpp basic_motion_test --ros-args \
 
 ### RViz 打开了两个窗口
 
-建图时 Gazebo 必须使用 `use_rviz:=false`，由 `slam.launch.py` 启动唯一的建图 RViz；定位时同样让 Gazebo 使用 `use_rviz:=false`，由 `localization.launch.py` 启动唯一的定位 RViz。
+建图时 Gazebo 必须使用 `use_rviz:=false`，由 `slam.launch.py` 启动唯一的建图 RViz；只做定位时同样让 Gazebo 使用 `use_rviz:=false`，由 `localization.launch.py` 启动唯一的定位 RViz；进行 Nav2 导航时，Gazebo 和 `localization.launch.py` 都使用 `use_rviz:=false`，只由 `navigation.launch.py` 启动导航 RViz。
 
 ### RViz 显示 `Fixed Frame [map] does not exist`
 
