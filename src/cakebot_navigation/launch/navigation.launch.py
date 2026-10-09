@@ -55,9 +55,7 @@ def generate_launch_description():
     )
     use_rviz = DeclareLaunchArgument(
         "use_rviz",
-        # navigation.rviz is added in the next stage; keep this intermediate
-        # launch usable before that file exists.
-        default_value="false",
+        default_value="true",
         description="Whether to start the cakebot navigation RViz.",
     )
     rviz_config_file = DeclareLaunchArgument(
