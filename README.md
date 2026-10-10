@@ -1,12 +1,12 @@
-# cakebot ROS 2 仿真、建图与定位说明
+# cakebot ROS 2 仿真、建图、定位与导航说明
 
-本项目用于学习 ROS 2 Humble、Gazebo Classic、TF、激光雷达、SLAM 和 Nav2。当前已经完成机器人仿真、差速驱动、里程计、激光雷达、人工遥控、在线建图、地图保存和 AMCL 定位；阶段 8.5 已建立 MID-360 三维点云到现有二维建图/定位链路的感知适配层，下一步进入阶段 9 的 Nav2 导航闭环。
+本项目用于学习 ROS 2 Humble、Gazebo Classic、TF、激光雷达、SLAM 和 Nav2。当前已完成机器人仿真、差速驱动、里程计、激光雷达、人工遥控、在线建图、地图保存、AMCL 定位、MID-360 感知接口适配，以及阶段 9 的 Nav2 手动导航与 Action 验证。下一步是阶段 10：使用 C++ 客户端调用 `NavigateToPose` 和 `NavigateThroughPoses`。
 
 ## 1. 环境与编译
 
 以下命令默认工作空间位于 `/home/wen/cakebot`，ROS 2 发行版为 Humble。
 
-首次使用时确认建图和定位依赖已安装：
+首次使用时确认建图、定位和导航依赖已安装：
 
 ```bash
 sudo apt install \
@@ -74,15 +74,18 @@ colcon build \
 
 | 接口 | 说明 |
 |---|---|
-| `/cmd_vel` | 机器人速度指令 |
+| `/cmd_vel_nav` | Nav2 Controller 的内部速度输出；由 `navigation_launch.py` 重映射后送入 Velocity Smoother |
+| `/cmd_vel` | 最终机器人速度指令；主控制路径由 Velocity Smoother 发布，Nav2 恢复行为也可能直接发布，Gazebo 差速插件负责执行 |
 | `/odom` | Gazebo 差速驱动里程计 |
 | `/lidar/points_raw` | `sensor_msgs/msg/PointCloud2` 三维雷达原始点云；阶段 8.5 的感知适配层输入 |
 | `/lidar/imu` | `sensor_msgs/msg/Imu` 雷达内置 IMU 数据；阶段 8.5 只保留接口，暂不参与建图、定位或里程计融合 |
-| `/scan` | `sensor_msgs/msg/LaserScan` 二维扫描；二维仿真模式由雷达直接发布，MID-360 模式由 `/lidar/points_raw` 投影生成，供 SLAM Toolbox 和 AMCL 使用 |
+| `/scan` | `sensor_msgs/msg/LaserScan` 二维扫描；二维仿真模式由雷达直接发布，MID-360 模式由 `/lidar/points_raw` 投影生成，供 SLAM Toolbox、AMCL 和 Nav2 代价地图使用 |
 | `/map` | 建图时由 `slam_toolbox` 发布；定位时由 `map_server` 加载并发布保存的地图 |
 | `/amcl_pose` | AMCL 输出的当前定位结果，消息类型为 `PoseWithCovarianceStamped` |
 | `/particle_cloud` | AMCL 粒子云，用于观察定位是否收敛 |
 | `/amcl_path` | 项目节点根据 `/amcl_pose` 累积的估计轨迹，消息类型为 `nav_msgs/Path` |
+| `/navigate_to_pose` | `nav2_msgs/action/NavigateToPose`；RViz、命令行和后续 C++ 客户端使用的单目标导航接口 |
+| `/plan`、`/local_plan` | Nav2 发布的全局路径与局部控制轨迹，用于 RViz 观察和排障 |
 | `odom → base_link → laser_link` | 建图和定位都必须存在的基础 TF 链 |
 | `map → odom` | 建图时由 `slam_toolbox` 发布；定位时由 AMCL 发布；两者不能同时运行 |
 
@@ -103,7 +106,8 @@ colcon build \
        /scan  (LaserScan)
               │
               ├── SLAM Toolbox
-              └── AMCL
+              ├── AMCL
+              └── Nav2 global/local costmap
 ```
 
 - SLAM Toolbox 和 AMCL 继续只使用 `/scan`，不直接依赖 Livox 驱动或私有消息类型。
@@ -291,6 +295,17 @@ ros2 launch cakebot_navigation localization.launch.py \
   map:=/home/wen/cakebot/maps/map-2d/test_env.yaml
 ```
 
+上面的通用启动方式由用户在 RViz 中使用 **2D Pose Estimate** 设置初始位姿。只有在地图和机器人出生位姿固定、且已经知道对应 `map` 坐标时，才使用参数化初始位姿，例如：
+
+```bash
+ros2 launch cakebot_navigation localization.launch.py \
+  map:=/home/wen/cakebot/maps/map-2d/test_env.yaml \
+  set_initial_pose:=true \
+  initial_x:=0.0 \
+  initial_y:=0.0 \
+  initial_yaw:=0.0
+```
+
 | 参数 | 默认值 | 说明 |
 |---|---:|---|
 | `map` | 无，必填 | Nav2 地图 YAML 的绝对路径 |
@@ -301,10 +316,37 @@ ros2 launch cakebot_navigation localization.launch.py \
 | `save_trajectory` | `false` | 定位进程正常退出时是否自动保存完整 AMCL 轨迹 CSV |
 | `trajectory_file` | `amcl_trajectory.csv` | CSV 输出路径；相对路径以启动命令的工作目录为基准 |
 | `trajectory_overwrite` | `false` | 是否允许覆盖已有的同名 CSV |
+| `set_initial_pose` | `false` | 是否由启动参数直接设置 AMCL 初始位姿；为 `false` 时仍可用 RViz |
+| `initial_x` | `0.0` | 初始位姿的 `map` 坐标 x，单位 m |
+| `initial_y` | `0.0` | 初始位姿的 `map` 坐标 y，单位 m |
+| `initial_z` | `0.0` | 初始位姿的 `map` 坐标 z，平面机器人通常保持 0 |
+| `initial_yaw` | `0.0` | 初始航向角，单位 rad |
 
-定位 RViz 的 Fixed Frame 为 `map`，预置显示 `/map`、`/scan`、机器人模型、TF、`/particle_cloud`、`/amcl_pose` 和 `/amcl_path`。它还预置了默认关闭的 `/lidar/points_raw` 显示，需要对照原始点云时可手动开启。使用顶部工具栏的 **2D Pose Estimate** 可向 `/initialpose` 发布初始位姿。
+定位 RViz 的 Fixed Frame 为 `map`，预置显示 `/map`、`/scan`、机器人模型、TF、`/particle_cloud`、`/amcl_pose` 和 `/amcl_path`。它还预置了默认关闭的 `/lidar/points_raw` 显示，需要对照原始点云时可手动开启。不指定 `set_initial_pose:=true` 时，可使用顶部工具栏的 **2D Pose Estimate** 向 `/initialpose` 发布初始位姿。参数化初始位姿适合固定场景的重复实验，但 `initial_x`、`initial_y` 和 `initial_yaw` 属于地图坐标，不等同于 Gazebo 世界坐标；地图或机器人出生位置变化后必须重新确认，不能机械沿用 `(0, 0, 0)`。
 
 定位模式中，`map → odom` 的唯一发布者应当是 AMCL。因此启动 `localization.launch.py` 前，必须停止 `slam.launch.py`。
+
+### 3.8 `navigation.launch.py`
+
+该脚本在已经运行的静态地图定位系统上启动 Nav2 导航节点、`lifecycle_manager_navigation` 和可选导航 RViz。它不重复启动 `map_server` 或 AMCL。
+
+```bash
+ros2 launch cakebot_navigation navigation.launch.py \
+  use_sim_time:=true
+```
+
+| 参数 | 默认值 | 说明 |
+|---|---:|---|
+| `params_file` | 包内 `config/nav2_params.yaml` | cakebot 的 Nav2 导航参数 |
+| `use_sim_time` | `true` | Nav2 和 RViz 是否使用 Gazebo 时钟 |
+| `autostart` | `true` | 是否自动 configure 并 activate Nav2 lifecycle 节点 |
+| `log_level` | `info` | Nav2 节点日志级别 |
+| `use_rviz` | `true` | 是否启动导航 RViz |
+| `rviz_config_file` | 包内 `rviz/navigation.rviz` | 导航 RViz 配置 |
+
+该封装明确固定上游 `use_composition:=False`，让各服务器以独立进程运行，便于阶段 9 观察日志与生命周期。`--show-args` 还会显示上游 launch 继承的 namespace、container 和 respawn 参数；它们不是当前基线的常用入口，若以后启用 composition 或命名空间，应同时重新验证 topic、TF、RViz 和生命周期名称。
+
+当前插件、footprint、代价地图、DWB 运动限制、MID-360 启动流程和 Action 验收表详见 [`docs/阶段9-Nav2与Action.md`](docs/%E9%98%B6%E6%AE%B59-Nav2%E4%B8%8EAction.md)。
 
 ## 4. 地图自动保存脚本
 
@@ -759,7 +801,132 @@ ros2 run cakebot_navigation localization_smoke_test.py --ros-args \
 - `sensor_mode:=laser_2d` 的旧二维流程仍能运行；
 - 原始三维点云没有在本阶段直接参与避障，SLAM 和 AMCL 不依赖 Livox 私有消息。
 
-## 9. 基础运动测试
+## 9. 阶段 9：Nav2 手动导航与 Action
+
+阶段 9 已完成。该阶段以 MID-360 投影得到的统一 `/scan` 为主线，不创建 MID-360 专用 AMCL 配置。定位仍由 `localization.launch.py` 提供，导航由 `navigation.launch.py` 另行启动。
+
+### 9.1 关键设计决策
+
+- **定位与导航分开启动**：`localization.launch.py` 负责 `map_server`、AMCL 和 `map → odom`；`navigation.launch.py` 只启动 Nav2 导航服务器、导航 lifecycle manager 和可选 RViz，避免重复启动定位节点。
+- **感知接口保持统一**：AMCL 与 Nav2 代价地图都订阅 `/scan`。MID-360 只在适配层转换为 `LaserScan`，原始 `PointCloud2` 暂不直接接入代价地图；三维避障留到阶段 15。
+- **先采用成熟插件**：全局规划使用 NavFn，局部控制使用 DWB，路径平滑使用 SimpleSmoother，恢复行为使用 Nav2 Humble 自带插件。本阶段不编写自定义插件或行为树。
+- **使用真实矩形 footprint**：全局和局部代价地图均使用约 `0.32 × 0.25 m` 的矩形 footprint，并额外设置 `0.01 m` padding；不使用圆形 `robot_radius` 代替底盘几何。
+- **使用保守运动基线**：最大线速度为 `0.15 m/s`、最大角速度为 `0.60 rad/s`；线加速度上限 `0.10 m/s²` 与当前 Gazebo 轮加速度模型一致。这些数值用于低速闭环验证，不是最终真机性能上限。
+- **已知地图禁止穿越未知区**：NavFn 使用 `allow_unknown: false`。进入阶段 13～14 的在线 SLAM 与前沿探索前必须重新评估该参数。
+- **无回波暂不作为清除射线**：障碍层当前使用 `inf_is_valid: false`，而 MID-360 适配器可能输出 `+inf`。如果出现障碍消失后仍残留代价的“鬼影”，应通过对照实验评估 `inf_is_valid: true`。
+- **速度平滑不是最终安全链**：Controller 输出被重映射到 `/cmd_vel_nav`，再由 Velocity Smoother 输出 `/cmd_vel`；Nav2 Humble 的 Behavior Server 恢复动作默认可直接发布 `/cmd_vel`。阶段 15 需要统一整理所有速度来源，并在底盘之前加入 Collision Monitor、传感器超时停车和三维障碍输入。
+
+### 9.2 MID-360 导航完整启动顺序
+
+每个终端都要先加载 ROS 2 和工作空间环境。终端 1 启动仿真与 MID-360：
+
+```bash
+ros2 launch cakebot_description gazebo.launch.py \
+  world:=/home/wen/cakebot/src/cakebot_description/worlds/test_env.world \
+  sensor_mode:=mid360_sim \
+  visualize_lidar:=false \
+  use_rviz:=false
+```
+
+终端 2 将点云转换为统一 `/scan`：
+
+```bash
+ros2 launch cakebot_perception lidar_adapter.launch.py \
+  use_sim_time:=true
+```
+
+终端 3 加载 MID-360 流程生成的地图并启动 AMCL。下面的固定初值仅适用于当前 `test_env_mid360` 地图和默认出生位姿：
+
+```bash
+ros2 launch cakebot_navigation localization.launch.py \
+  map:=/home/wen/cakebot/maps/mid360_runs/test_env_mid360.yaml \
+  use_sim_time:=true \
+  use_rviz:=false \
+  set_initial_pose:=true \
+  initial_x:=0.0 \
+  initial_y:=0.0 \
+  initial_z:=0.0 \
+  initial_yaw:=0.0
+```
+
+若固定初值不适用于当前地图，应去掉 `set_initial_pose` 和 `initial_*` 参数，稍后在导航 RViz 中使用 **2D Pose Estimate**。启动 Nav2 前先确认定位 TF 已建立：
+
+```bash
+ros2 run tf2_ros tf2_echo map base_link
+```
+
+终端 4 启动 Nav2 和本次实验唯一的 RViz：
+
+```bash
+ros2 launch cakebot_navigation navigation.launch.py \
+  use_sim_time:=true
+```
+
+### 9.3 当前参数基线
+
+实际参数以 `src/cakebot_navigation/config/nav2_params.yaml` 为唯一真值。阶段 9 的关键基线为：
+
+| 类别 | 当前选择 |
+|---|---|
+| 坐标系 | 全局 `map`，局部 `odom`，机器人 `base_link` |
+| Footprint | `[[0.16, 0.125], [0.16, -0.125], [-0.16, -0.125], [-0.16, 0.125]]`，padding `0.01 m` |
+| Global costmap | StaticLayer + ObstacleLayer + InflationLayer，`1 Hz` 更新 |
+| Local costmap | `3 × 3 m` rolling window，ObstacleLayer + InflationLayer，`5 Hz` 更新 |
+| 障碍输入 | `/scan`，障碍范围 `0.12～7.5 m`，射线清除范围 `0.12～8.0 m` |
+| Inflation | 半径 `0.30 m`，cost scaling factor `5.0` |
+| Planner / Controller | NavFn / DWB |
+| 速度限制 | `0.15 m/s`、`0.60 rad/s` |
+| 加减速度限制 | `±0.10 m/s²`、`±0.80 rad/s²` |
+| 到达容差 | XY `0.12 m`，yaw `0.15 rad` |
+| 进度检查 | 10 秒内至少移动 `0.05 m` |
+| Velocity Smoother | `OPEN_LOOP`，`20 Hz`，超时 `1.0 s` |
+
+### 9.4 Action 操作与观察
+
+确认 Action 和生命周期状态：
+
+```bash
+ros2 action list -t
+ros2 action info /navigate_to_pose
+ros2 lifecycle get /controller_server
+ros2 lifecycle get /planner_server
+ros2 lifecycle get /bt_navigator
+```
+
+可以在 RViz 使用 **Nav2 Goal** 发送目标、在 **Navigation 2** 面板取消任务，也可以使用命令行固定目标并查看 feedback：
+
+```bash
+ros2 action send_goal \
+  /navigate_to_pose \
+  nav2_msgs/action/NavigateToPose \
+  "{pose: {header: {frame_id: map}, pose: {position: {x: 1.0, y: 0.0, z: 0.0}, orientation: {x: 0.0, y: 0.0, z: 0.0, w: 1.0}}}}" \
+  --feedback
+```
+
+示例坐标只适用于目标点在当前地图中确实可达的情况。Action 的关键语义是：goal 描述目标位姿，feedback 持续报告进度，result 在任务结束时返回，cancel 请求终止指定目标；发送新 goal 会替换正在执行的旧目标。Humble 的 `NavigateToPose` result 负载为空，最终应通过 `SUCCEEDED`、`CANCELED` 或 `ABORTED` 状态判断任务结果。
+
+### 9.5 完成标准
+
+- `/navigate_to_pose` 存在，Controller、Planner 和 BT Navigator 均为 `active`；
+- `/scan` 只有一个发布者，`map → odom → base_link → laser_link` 连通；
+- RViz 中 footprint 与机器人对齐，全局/局部代价地图和路径正常更新；
+- 可达目标无碰撞到达并返回 `SUCCEEDED`；
+- 行驶中取消后返回 `CANCELED`，`/cmd_vel` 回零；
+- 行驶中发送新目标后能够放弃旧目标、重新规划并到达新目标；
+- 不可达目标不会无限运动，经过有限恢复后返回 `ABORTED`。
+
+本阶段的完整学习文档为 [`docs/阶段9-Nav2与Action.md`](docs/%E9%98%B6%E6%AE%B59-Nav2%E4%B8%8EAction.md)，其中已记录：
+
+- 2026-10-09 的 Nav2 初始配置基线；
+- 当前 Planner、Controller、Smoother、Costmap、Behavior 和 Waypoint 插件；
+- footprint、障碍层、inflation、速度/加速度、goal/progress checker 等关键参数；
+- `allow_unknown` 和 `inf_is_valid` 等行为选择及后续调整条件；
+- MID-360 模式的四终端启动顺序；
+- Action 概念、手动测试用例和阶段 9 验收表。
+
+`nav2_params.yaml` 是实际配置的唯一真值来源；阶段文档是学习和实验快照。修改参数时应同步记录修改原因和对照实验结果。
+
+## 10. 辅助工具：基础运动测试
 
 `basic_motion_test` 用于验证 `/cmd_vel`、`/odom` 和 `/scan`，不参与 SLAM 建图。先启动 Gazebo，再运行：
 
@@ -790,7 +957,7 @@ ros2 run cakebot_demo_cpp basic_motion_test --ros-args \
 
 成功时终端输出 `Basic motion test PASSED`。该节点运行时不要同时启动键盘控制节点。
 
-## 10. 模型与雷达参数
+## 11. 配置参考：模型与雷达参数
 
 参数定义在 `src/cakebot_description/urdf/cakebot.urdf.xacro`：
 
@@ -820,7 +987,7 @@ ros2 run cakebot_demo_cpp basic_motion_test --ros-args \
 
 `mid360_sim` 是使用 Gazebo 规则射线实现的近似模型，用于验证 ROS 接口和 `PointCloud2 → LaserScan` 数据链，不模拟真机的非重复扫描模式、噪声、反射率、时间畸变或实际点云密度。二维与三维模式在空的 `cakebot.world` 中都可能没有有效回波；建图和有效距离测试应使用 `test_env.world`。
 
-## 11. 常见问题
+## 12. 故障排查
 
 ### RViz 打开了两个窗口
 
@@ -886,6 +1053,35 @@ ros2 run tf2_ros tf2_echo map odom
 
 仿真运行脚本时必须传入 `-p use_sim_time:=true`。先确认 Gazebo、`localization.launch.py` 和键盘节点分别在独立终端运行；基础测试要求 `/map`、`/scan`、`/odom` 都已出现。若设置了 `require_motion:=true`，请在 `motion_timeout_sec` 内键盘移动机器人至少 `motion_distance` 米。初始位姿错误时，也应先在 RViz 中定位到正确位置，再把相同的地图坐标传给脚本的 `initial_x`、`initial_y` 和 `initial_yaw`。
 
+### `/navigate_to_pose` 不存在或 Nav2 节点不是 `active`
+
+先确认 `navigation.launch.py` 正在运行并检查导航生命周期节点：
+
+```bash
+ros2 lifecycle get /controller_server
+ros2 lifecycle get /planner_server
+ros2 lifecycle get /bt_navigator
+ros2 action list -t
+```
+
+若节点未激活，检查 Nav2 终端最早出现的参数、插件加载或 TF 错误。`navigation.launch.py` 不启动 `map_server` 和 AMCL，因此还必须单独运行 `localization.launch.py`。
+
+### 能发送导航目标，但机器人不动或不断报告 TF 错误
+
+先确认 AMCL 已经建立完整变换，并确认速度话题的发布者符合预期：
+
+```bash
+ros2 run tf2_ros tf2_echo map base_link
+ros2 topic info /cmd_vel_nav --verbose
+ros2 topic info /cmd_vel --verbose
+```
+
+阶段 9 的主控制速度链是 `controller_server → /cmd_vel_nav → velocity_smoother → /cmd_vel → Gazebo 差速插件`；Behavior Server 执行旋转、后退等恢复动作时也可能直接发布 `/cmd_vel`，因此导航运行时 `/cmd_vel` 存在这两个 Nav2 发布端属于正常设计。不要再同时运行键盘节点或 `basic_motion_test`。
+
+### 障碍物离开后，代价地图仍保留障碍
+
+先检查 `/scan` 是否持续更新以及 obstacle layer 是否仍在接收数据。当前配置使用 `inf_is_valid: false`，而点云适配器会对部分无回波方向输出 `+inf`；若确认存在稳定的残留障碍，应在固定场景中对比 `inf_is_valid: true`，记录清除效果后再决定是否修改，不要只为消除一次偶发现象直接改参数。
+
 ### 键盘按键没有响应
 
 确认键盘终端保持焦点，并检查是否有多个 `/cmd_vel` 发布者：
@@ -902,7 +1098,7 @@ ros2 topic info /cmd_vel -v
 
 降低遥控速度，减少急转，确认 `/odom` 和 TF 连续，并重复经过已经建好的区域形成回环。
 
-## 12. 生成目录
+## 13. 生成目录与成果文件
 
 以下目录由 colcon 生成，不应提交：
 
